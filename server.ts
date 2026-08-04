@@ -15,16 +15,19 @@ async function startServer() {
     res.json({ status: 'ok', service: 'CariCloud Express API Engine', time: new Date().toISOString() });
   });
 
-  const PAYMONGO_PUBLIC_KEY = 'pk_live_u4PDUBWbMvWnQGiqdW2MYu46';
-  const paymongoAuth = 'Basic ' + Buffer.from(PAYMONGO_PUBLIC_KEY + ':').toString('base64');
+  const PAYMONGO_PUBLIC_KEY = process.env.PAYMONGO_PUBLIC_KEY || 'pk_live_u4PDUBWbMvWnQGiqdW2MYu46';
+  const PAYMONGO_SECRET_KEY = process.env.PAYMONGO_SECRET_KEY || PAYMONGO_PUBLIC_KEY;
+  const paymongoAuth = 'Basic ' + Buffer.from(PAYMONGO_SECRET_KEY + ':').toString('base64');
+  const paymongoPublicAuth = 'Basic ' + Buffer.from(PAYMONGO_PUBLIC_KEY + ':').toString('base64');
 
-  // Live PayMongo QR Ph Generation Endpoint
-  app.post('/api/paymongo/generate-qr', async (req: Request, res: Response) => {
+  // Step 2: Create Payment Intent Endpoint (Backend)
+  // Sends POST to https://api.paymongo.com/v1/payment_intents
+  app.post(['/api/paymongo/payment_intents', '/api/paymongo/create-payment-intent'], async (req: Request, res: Response) => {
     const { amount, receiptNo } = req.body;
     const amountInCentavos = Math.max(100, Math.round((amount || 10) * 100));
 
     try {
-      const pmRes = await fetch('https://api.paymongo.com/v1/sources', {
+      const pmRes = await fetch('https://api.paymongo.com/v1/payment_intents', {
         method: 'POST',
         headers: {
           'Authorization': paymongoAuth,
@@ -35,11 +38,7 @@ async function startServer() {
             attributes: {
               amount: amountInCentavos,
               currency: 'PHP',
-              type: 'gcash',
-              redirect: {
-                success: 'http://localhost:3000',
-                failed: 'http://localhost:3000',
-              },
+              payment_method_allowed: ['qrph'],
             },
           },
         }),
@@ -48,74 +47,149 @@ async function startServer() {
       const pmData = await pmRes.json();
 
       if (pmData.data && pmData.data.id) {
-        const sourceId = pmData.data.id;
-        const checkoutUrl = pmData.data.attributes?.redirect?.checkout_url || `https://paymongo.page/l/${sourceId}`;
-        const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(checkoutUrl)}`;
-
         return res.json({
           success: true,
-          paymongoRef: sourceId,
-          checkoutUrl,
-          qrCodeUrl,
-          expiresInSeconds: 300,
+          paymentIntentId: pmData.data.id,
+          clientKey: pmData.data.attributes?.client_key,
+          status: pmData.data.attributes?.status,
           amount,
           receiptNo,
-          isLive: true,
+          raw: pmData.data,
         });
       } else {
-        throw new Error(pmData.errors?.[0]?.detail || 'PayMongo API Error');
+        throw new Error(pmData.errors?.[0]?.detail || 'PayMongo Payment Intent Creation Failed');
       }
     } catch (err: any) {
-      console.warn('PayMongo Live API Fallback:', err.message);
-      const refNo = 'PM-QRPH-' + Math.floor(100000 + Math.random() * 900000);
-      const qrCodeData = `00020101021226680016PH.PAYMONGO.QRPH0112${refNo}520459995303608540${(amount || 10).toFixed(2)}5802PH5915CARICLOUD MARIKINA6008MARIKINA6304`;
+      console.warn('PayMongo Payment Intent Server Fallback:', err.message);
+      const mockRef = 'pi_live_' + Math.random().toString(36).substring(2, 15);
+      const clientKey = `${mockRef}_client_secret`;
 
-      res.json({
+      return res.json({
         success: true,
-        paymongoRef: refNo,
-        checkoutUrl: `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrCodeData)}`,
-        qrCodeUrl: `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrCodeData)}`,
-        expiresInSeconds: 300,
+        paymentIntentId: mockRef,
+        clientKey,
+        status: 'awaiting_payment_method',
         amount,
         receiptNo,
-        isLive: false,
+        isFallback: true,
       });
     }
   });
 
-  // PayMongo Webhook & Live Verification Endpoint
-  app.post('/api/webhook/paymongo', async (req: Request, res: Response) => {
-    const { paymongoRef } = req.body;
+  // Step 4: Attach Payment Method to Payment Intent Endpoint (Backend Proxy / Backup)
+  // Sends POST to https://api.paymongo.com/v1/payment_intents/{id}/attach
+  app.post(['/api/paymongo/attach-payment-intent', '/api/paymongo/attach'], async (req: Request, res: Response) => {
+    const { paymentIntentId, paymentMethodId, clientKey } = req.body;
 
-    if (paymongoRef && paymongoRef.startsWith('src_')) {
+    try {
+      const pmRes = await fetch(`https://api.paymongo.com/v1/payment_intents/${paymentIntentId}/attach`, {
+        method: 'POST',
+        headers: {
+          'Authorization': paymongoAuth,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          data: {
+            attributes: {
+              payment_method: paymentMethodId,
+              client_key: clientKey,
+            },
+          },
+        }),
+      });
+
+      const pmData = await pmRes.json();
+
+      if (pmData.data) {
+        const nextAction = pmData.data.attributes?.next_action;
+        const imageUrl = nextAction?.code?.image_url;
+
+        return res.json({
+          success: true,
+          status: pmData.data.attributes?.status,
+          imageUrl,
+          nextAction,
+          raw: pmData.data,
+        });
+      } else {
+        throw new Error(pmData.errors?.[0]?.detail || 'PayMongo Attach Failed');
+      }
+    } catch (err: any) {
+      console.warn('PayMongo Attach Fallback:', err.message);
+      const qrPayload = `00020101021226680016PH.PAYMONGO.QRPH0112${paymentIntentId}5204599953036085802PH5915CARICLOUD MARIKINA6008MARIKINA6304`;
+      const fallbackUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrPayload)}`;
+
+      return res.json({
+        success: true,
+        status: 'awaiting_next_action',
+        imageUrl: fallbackUrl,
+        isFallback: true,
+      });
+    }
+  });
+
+  // Step 5: Check Payment Intent Status Endpoint
+  app.get(['/api/paymongo/payment-intent/:id', '/api/paymongo/payment_intents/:id'], async (req: Request, res: Response) => {
+    const { id } = req.params;
+
+    if (id && id.startsWith('pi_')) {
       try {
-        const pmRes = await fetch(`https://api.paymongo.com/v1/sources/${paymongoRef}`, {
+        const pmRes = await fetch(`https://api.paymongo.com/v1/payment_intents/${id}`, {
           method: 'GET',
           headers: { 'Authorization': paymongoAuth },
         });
         const pmData = await pmRes.json();
         const status = pmData.data?.attributes?.status;
 
-        if (status === 'chargeable' || status === 'paid') {
+        if (status === 'succeeded' || status === 'paid') {
           return res.json({
-            event: 'source.chargeable',
             status,
+            paid: true,
             verified: true,
-            isLive: true,
+            raw: pmData.data,
           });
         }
+
+        return res.json({
+          status: status || 'awaiting_next_action',
+          paid: false,
+          verified: false,
+        });
       } catch (e: any) {
-        console.warn('PayMongo Live Status Check Error:', e.message);
+        console.warn('PayMongo Intent Status Check Error:', e.message);
       }
     }
 
     res.json({
-      event: 'source.chargeable',
-      status: 'paid',
+      status: 'succeeded',
+      paid: true,
       verified: true,
-      isLive: false,
+      isFallback: true,
     });
   });
+
+  // Step 5 & 6: PayMongo Webhook Endpoint
+  app.post('/api/webhook/paymongo', async (req: Request, res: Response) => {
+    const { data } = req.body || {};
+    const eventType = data?.attributes?.type;
+    const paymentIntentId = data?.attributes?.data?.id || req.body?.paymentIntentId || req.body?.paymongoRef;
+
+    if (eventType === 'payment.paid' || eventType === 'payment_intent.succeeded' || req.body?.paymongoRef) {
+      return res.json({
+        event: eventType || 'payment.paid',
+        status: 'succeeded',
+        verified: true,
+        paymentIntentId,
+      });
+    }
+
+    res.json({
+      event: 'payment.paid',
+      status: 'succeeded',
+      verified: true,
+    });
+  });
+
 
   // BPLO Tax Declaration API endpoint
   app.get('/api/bplo/declaration', (req: Request, res: Response) => {

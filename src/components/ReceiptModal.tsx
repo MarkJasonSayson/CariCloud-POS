@@ -27,7 +27,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
   return (
     <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-fadeIn">
       <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full border border-slate-100 overflow-hidden flex flex-col max-h-[90vh]">
-        
+
         {/* Modal Top Bar */}
         <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
           <div className="flex items-center space-x-2.5">
@@ -59,7 +59,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
 
         {/* Receipt Printable Container */}
         <div className="p-6 overflow-y-auto font-mono text-slate-900 text-xs space-y-4 bg-slate-50/50" id="printable-receipt">
-          
+
           {/* Header */}
           <div className="text-center space-y-1 pb-4 border-b border-dashed border-slate-300">
             <h2 className="font-sans font-black text-xl text-slate-900 tracking-tight">
@@ -196,7 +196,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
 
         {/* Action Buttons Panel */}
         <div className="p-5 bg-slate-50 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
-          
+
           {/* Direct Start New Order (WITHOUT printing) */}
           <button
             onClick={onClose}
