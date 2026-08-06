@@ -1,17 +1,16 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { 
-  MenuItem, 
-  CartItem, 
-  Transaction, 
-  CustomerCredit, 
-  EODRecord, 
-  StoreSettings, 
-  UserProfile, 
-  SelectedModifier, 
+import {
+  MenuItem,
+  CartItem,
+  Transaction,
+  CustomerCredit,
+  EODRecord,
+  StoreSettings,
+  UserProfile,
+  SelectedModifier,
   SubscriptionTierLevel,
   DebtPaymentRecord
 } from './types';
-import { db } from './services/db';
 import { Header } from './components/Header';
 import { LoginLandingPage } from './components/LoginLandingPage';
 import { POSModule } from './components/POSModule';
@@ -293,7 +292,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col selection:bg-orange-600 selection:text-white">
-      
+
       {/* Top Header & Navigation */}
       <Header
         settings={settings}
