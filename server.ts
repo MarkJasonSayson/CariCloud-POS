@@ -1,11 +1,15 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
+import cors from 'cors'; // Added for cross-origin frontend-backend communication
+import db from './db.ts';   // Added to import your MySQL connection
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  // Middleware
+  app.use(cors());
   app.use(express.json());
 
   // --- REST API ENDPOINTS ---
@@ -14,6 +18,50 @@ async function startServer() {
   app.get('/api/health', (req: Request, res: Response) => {
     res.json({ status: 'ok', service: 'CariCloud Express API Engine', time: new Date().toISOString() });
   });
+
+  // ==========================================
+  // MYSQL DATABASE ENDPOINTS
+  // ==========================================
+
+  // Fetch Active Menu Grid from MySQL
+  app.get('/api/menu', async (req: Request, res: Response) => {
+    try {
+      const [rows] = await db.execute(
+        'SELECT product_id, name, category, price_full, price_half, isSoldOut FROM PRODUCT WHERE isAvailable = 1'
+      );
+      res.status(200).json(rows);
+    } catch (error) {
+      console.error('Error fetching menu data:', error);
+      res.status(500).json({ error: 'Internal Server Error while fetching menu.' });
+    }
+  });
+
+  // Create Checkout Session in MySQL
+  app.post('/api/checkout', async (req: Request, res: Response) => {
+    try {
+      const { userId, paymentMode } = req.body;
+
+      const [sessionResult]: any = await db.execute(
+        'INSERT INTO ORDER_SESSION (user_id, session_status) VALUES (?, ?)',
+        [userId || 1, 'Closed'] // Uses ID 1 as a fallback if no user is passed
+      );
+
+      const sessionId = sessionResult.insertId;
+
+      res.status(201).json({
+        success: true,
+        sessionId: sessionId,
+        message: 'Transaction successfully logged.'
+      });
+    } catch (error) {
+      console.error('Checkout failed:', error);
+      res.status(500).json({ error: 'Internal Server Error during checkout processing.' });
+    }
+  });
+
+  // ==========================================
+  // PAYMONGO & BPLO ENDPOINTS
+  // ==========================================
 
   const PAYMONGO_PUBLIC_KEY = process.env.PAYMONGO_PUBLIC_KEY || 'pk_live_u4PDUBWbMvWnQGiqdW2MYu46';
   const PAYMONGO_SECRET_KEY = process.env.PAYMONGO_SECRET_KEY || PAYMONGO_PUBLIC_KEY;
@@ -190,7 +238,6 @@ async function startServer() {
     });
   });
 
-
   // BPLO Tax Declaration API endpoint
   app.get('/api/bplo/declaration', (req: Request, res: Response) => {
     res.json({
@@ -203,6 +250,10 @@ async function startServer() {
       note: 'Pursuant to Marikina Local Revenue Code, businesses with annual gross receipts below ₱250,000 enjoy preferential local business tax exemptions.',
     });
   });
+
+  // ==========================================
+  // VITE MIDDLEWARE & SERVER START
+  // ==========================================
 
   // Vite middleware for development mode
   if (process.env.NODE_ENV !== 'production') {
