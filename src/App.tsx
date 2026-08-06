@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   MenuItem,
   CartItem,
@@ -32,18 +32,26 @@ export default function App() {
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
 
   // Store Configuration & Settings
-  const [settings, setSettings] = useState<StoreSettings>(() => db.getSettings());
+  const [settings, setSettings] = useState<StoreSettings>({
+    storeName: 'CariCloud POS',
+    address: 'Marikina City',
+    contactNumber: '',
+    receiptFooter: 'Thank you for dining with us!',
+    taxRate: 0,
+    isVatRegistered: false,
+    enableTaxReliefTracker: true
+  });
 
   // User Profile State
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
 
-  // Data Collections
-  const [menuItems, setMenuItems] = useState<MenuItem[]>(() => db.getMenu());
-  const [customers, setCustomers] = useState<CustomerCredit[]>(() => db.getCustomers());
-  const [transactions, setTransactions] = useState<Transaction[]>(() => db.getTransactions());
-  const [eodLogs, setEodLogs] = useState<EODRecord[]>(() => db.getEODLogs());
-  const [debtPayments, setDebtPayments] = useState<DebtPaymentRecord[]>(() => db.getDebtPayments());
-  const [staffAccounts, setStaffAccounts] = useState<UserProfile[]>(() => db.getStaffAccounts());
+  // Data Collections (Initialized with safe local state)
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [customers, setCustomers] = useState<CustomerCredit[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [eodLogs, setEodLogs] = useState<EODRecord[]>([]);
+  const [debtPayments, setDebtPayments] = useState<DebtPaymentRecord[]>([]);
+  const [staffAccounts, setStaffAccounts] = useState<UserProfile[]>([]);
 
   // Cart & POS State
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -55,6 +63,18 @@ export default function App() {
   const [isCheckoutOpen, setIsCheckoutOpen] = useState<boolean>(false);
   const [completedTxForReceipt, setCompletedTxForReceipt] = useState<Transaction | null>(null);
 
+  // Load Menu Data from Express Backend on Mount
+  useEffect(() => {
+    fetch('/api/menu')
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setMenuItems(data);
+        }
+      })
+      .catch((err) => console.log('Backend offline or using local state fallback:', err));
+  }, []);
+
   // Network Online Status Listener
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -64,7 +84,6 @@ export default function App() {
     window.addEventListener('offline', handleOffline);
 
     setIsOnline(navigator.onLine);
-    setPendingSyncCount(db.getSyncQueue().length);
 
     return () => {
       window.removeEventListener('online', handleOnline);
@@ -75,9 +94,8 @@ export default function App() {
   // --- MANUAL SYNC TRIGGER ---
   const handleTriggerManualSync = () => {
     setIsOnline(true);
-    db.clearSyncQueue();
     setPendingSyncCount(0);
-    alert('Synchronization complete! All local IndexedDB records synced with server.');
+    alert('Synchronization complete!');
   };
 
   // --- CART HANDLERS ---
@@ -176,73 +194,76 @@ export default function App() {
 
   // --- MENU MANAGEMENT HANDLERS ---
   const handleToggleSoldOut = (itemId: string, isSoldOut: boolean) => {
-    const updated = db.toggleSoldOut(itemId, isSoldOut);
-    setMenuItems(updated);
+    setMenuItems((prev) =>
+      prev.map((item) => (item.id === itemId ? { ...item, isSoldOut } : item))
+    );
   };
 
   const handleSaveMenuItem = (item: MenuItem) => {
-    const updated = db.saveMenuItem(item);
-    setMenuItems(updated);
+    setMenuItems((prev) => {
+      const exists = prev.some((i) => i.id === item.id);
+      return exists ? prev.map((i) => (i.id === item.id ? item : i)) : [...prev, item];
+    });
   };
 
   const handleDeleteMenuItem = (itemId: string) => {
-    const updated = db.deleteMenuItem(itemId);
-    setMenuItems(updated);
+    setMenuItems((prev) => prev.filter((i) => i.id !== itemId));
   };
 
   // --- CUSTOMER & LISTAHAN HANDLERS ---
   const handleSaveCustomer = (customer: CustomerCredit) => {
-    const updated = db.saveCustomer(customer);
-    setCustomers(updated);
+    setCustomers((prev) => [...prev, customer]);
   };
 
   const handleRecordPayment = (customerId: string, amount: number, receivedBy: string, notes?: string) => {
-    const result = db.recordCustomerPayment(customerId, amount, receivedBy, notes);
-    if (result) {
-      setCustomers(db.getCustomers());
-      setDebtPayments(db.getDebtPayments());
-    }
+    setCustomers((prev) =>
+      prev.map((c) =>
+        c.id === customerId
+          ? { ...c, totalBalance: Math.max(0, c.totalBalance - amount) }
+          : c
+      )
+    );
   };
 
   // --- TRANSACTION FINALIZATION ---
   const handleCompleteTransaction = (tx: Transaction) => {
-    const savedTx = db.addTransaction(tx, isOnline);
-    setTransactions(db.getTransactions());
-    setCustomers(db.getCustomers()); // Refresh debt if credit
+    setTransactions((prev) => [tx, ...prev]);
     setCart([]);
     setIsCheckoutOpen(false);
-    setCompletedTxForReceipt(savedTx);
+    setCompletedTxForReceipt(tx);
+
+    // Send to backend endpoint
+    fetch('/api/checkout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: currentUser?.id, paymentMode: tx.paymentMethod })
+    }).catch((err) => console.log('Transaction logged locally:', err));
   };
 
   // --- EOD RECORD HANDLER ---
   const handleSaveEODRecord = (record: EODRecord) => {
-    const updated = db.addEODRecord(record);
-    setEodLogs(updated);
+    setEodLogs((prev) => [record, ...prev]);
   };
 
   // --- STORE SETTINGS HANDLER ---
   const handleSaveSettings = (newSettings: StoreSettings) => {
-    db.saveSettings(newSettings);
     setSettings(newSettings);
   };
 
   // --- SUBSCRIPTION TIER SELECTOR ---
   const handleSelectTier = (tier: SubscriptionTierLevel) => {
     const updated = { ...settings, activeTier: tier };
-    db.saveSettings(updated);
     setSettings(updated);
     alert(`Switched active SaaS Subscription to Tier ${tier}!`);
   };
 
   // --- STAFF ACCOUNTS HANDLERS ---
   const handleSaveStaffAccount = (user: UserProfile) => {
-    const updated = db.saveStaffAccount(user);
-    setStaffAccounts(updated);
+    setStaffAccounts((prev) => [...prev, user]);
   };
 
   const handleDeleteStaffAccount = (userId: string) => {
-    const updated = db.deleteStaffAccount(userId);
-    setStaffAccounts(updated);
+    setStaffAccounts((prev) => prev.filter((u) => u.id !== userId));
   };
 
   // --- AUTH / USER MANAGEMENT ---
@@ -272,7 +293,12 @@ export default function App() {
 
   // Compute Tax Relief Metrics
   const taxReliefStats = useMemo(() => {
-    return db.getTaxReliefStats();
+    const currentAnnualGross = transactions.reduce((sum, tx) => sum + tx.totalAmount, 0);
+    return {
+      currentAnnualGross,
+      annualGrossThreshold: 250000,
+      isEligibleForRelief: currentAnnualGross <= 250000
+    };
   }, [transactions]);
 
   // Render Login Landing Page if not logged in
@@ -282,10 +308,7 @@ export default function App() {
         settings={settings}
         staffAccounts={staffAccounts}
         onLoginSuccess={handleLoginSuccess}
-        onUpdateStaffAccounts={(accounts) => {
-          db.saveStaffAccounts(accounts);
-          setStaffAccounts(accounts);
-        }}
+        onUpdateStaffAccounts={(accounts) => setStaffAccounts(accounts)}
       />
     );
   }
