@@ -60,7 +60,7 @@ export const Header: React.FC<HeaderProps> = ({
       tierLock: settings.activeTier < 3 ? 'Tier 3' : null 
     }] : []),
     ...(isOwner ? [{ id: 'subscription', label: 'Plans (SaaS)', badge: '₱49-₱199' }] : []),
-    { id: 'settings', label: 'Settings', badge: !isOwner ? 'UI Theme' : null },
+    ...(isOwner ? [{ id: 'settings', label: 'Settings', badge: null }] : []),
   ];
 
   return (

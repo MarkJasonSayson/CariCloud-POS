@@ -13,7 +13,23 @@ export interface UserProfile {
   password?: string;
   avatar?: string;
   pin?: string;
+  parentOwnerId?: string | number;
+  invitationStatus?: 'PENDING' | 'ACCEPTED' | 'EXPIRED' | 'REVOKED';
+  invitationToken?: string;
 }
+
+export type InvitationStatus = 'PENDING' | 'ACCEPTED' | 'EXPIRED' | 'REVOKED';
+
+export interface EmployeeInvitation {
+  invitation_id: number | string;
+  tenant_id: number | string;
+  email: string;
+  token: string;
+  status: InvitationStatus;
+  created_at: string;
+  expires_at?: string;
+}
+
 
 export type Category = 'Ulam' | 'Rice' | 'Drinks' | 'Snacks' | 'Specials';
 

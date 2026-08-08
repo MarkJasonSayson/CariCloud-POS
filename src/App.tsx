@@ -81,19 +81,41 @@ export default function App() {
   const [isCheckoutOpen, setIsCheckoutOpen] = useState<boolean>(false);
   const [completedTxForReceipt, setCompletedTxForReceipt] = useState<Transaction | null>(null);
 
-  // Load Menu Data from Express Backend after login (Multi-tenant secured)
+  // Helper functions for Menu & Transactions sync with MySQL
+  const fetchMenu = async (tenantId: string | number) => {
+    try {
+      const res = await fetch(`/api/menu?userId=${tenantId}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setMenuItems(data);
+        }
+      }
+    } catch (err) {
+      console.log('Backend menu fetch offline or fallback:', err);
+    }
+  };
+
+  const fetchTransactions = async (tenantId: string | number) => {
+    try {
+      const res = await fetch(`/api/transactions?userId=${tenantId}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setTransactions(data);
+        }
+      }
+    } catch (err) {
+      console.log('Backend transactions fetch offline or fallback:', err);
+    }
+  };
+
+  // Load Menu and Transaction Data from Express Backend after login (Multi-tenant secured)
   useEffect(() => {
     if (currentUser) {
       const tenantId = currentUser.role === 'ADMIN' ? currentUser.id : currentUser.parentOwnerId || 1;
-
-      fetch(`/api/menu?userId=${tenantId}`)
-        .then((res) => res.json())
-        .then((data) => {
-          if (Array.isArray(data) && data.length > 0) {
-            setMenuItems(data);
-          }
-        })
-        .catch((err) => console.log('Backend offline or using local state fallback:', err));
+      fetchMenu(tenantId);
+      fetchTransactions(tenantId);
     }
   }, [currentUser]);
 
@@ -215,21 +237,79 @@ export default function App() {
   }, [cartSubtotal, isSeniorOrPwd, seniorPwdId, seniorPwdName]);
 
   // --- MENU MANAGEMENT HANDLERS ---
-  const handleToggleSoldOut = (itemId: string, isSoldOut: boolean) => {
+  const handleToggleSoldOut = async (itemId: string, isSoldOut: boolean) => {
+    // Optimistic state update
     setMenuItems((prev) =>
       prev.map((item) => (item.id === itemId ? { ...item, isSoldOut } : item))
     );
+
+    const tenantId = currentUser?.role === 'ADMIN' ? currentUser.id : currentUser?.parentOwnerId || 1;
+    try {
+      await fetch(`/api/menu/${itemId}/soldout`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: tenantId, isSoldOut }),
+      });
+      fetchMenu(tenantId);
+    } catch (err) {
+      console.error('Failed to persist sold-out status:', err);
+      fetchMenu(tenantId);
+    }
   };
 
-  const handleSaveMenuItem = (item: MenuItem) => {
-    setMenuItems((prev) => {
-      const exists = prev.some((i) => i.id === item.id);
-      return exists ? prev.map((i) => (i.id === item.id ? item : i)) : [...prev, item];
-    });
+  const handleSaveMenuItem = async (item: MenuItem) => {
+    const tenantId = currentUser?.role === 'ADMIN' ? currentUser.id : currentUser?.parentOwnerId || 1;
+    const isEditing = menuItems.some((i) => i.id === item.id);
+
+    if (isEditing) {
+      // Optimistic update
+      setMenuItems((prev) => prev.map((i) => (i.id === item.id ? item : i)));
+      try {
+        const res = await fetch(`/api/menu/${item.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: tenantId, ...item }),
+        });
+        if (res.ok) {
+          fetchMenu(tenantId);
+        }
+      } catch (err) {
+        console.error('Failed to update menu item in MySQL:', err);
+        fetchMenu(tenantId);
+      }
+    } else {
+      // Create new menu item
+      try {
+        const res = await fetch('/api/menu', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: tenantId, ...item }),
+        });
+        if (res.ok) {
+          fetchMenu(tenantId);
+        }
+      } catch (err) {
+        console.error('Failed to create menu item in MySQL:', err);
+      }
+    }
   };
 
-  const handleDeleteMenuItem = (itemId: string) => {
+  const handleDeleteMenuItem = async (itemId: string) => {
+    // Optimistic deletion
     setMenuItems((prev) => prev.filter((i) => i.id !== itemId));
+
+    const tenantId = currentUser?.role === 'ADMIN' ? currentUser.id : currentUser?.parentOwnerId || 1;
+    try {
+      const res = await fetch(`/api/menu/${itemId}?userId=${tenantId}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        fetchMenu(tenantId);
+      }
+    } catch (err) {
+      console.error('Failed to delete menu item in MySQL:', err);
+      fetchMenu(tenantId);
+    }
   };
 
   // --- CUSTOMER & LISTAHAN HANDLERS ---
@@ -254,17 +334,39 @@ export default function App() {
     setIsCheckoutOpen(false);
     setCompletedTxForReceipt(tx);
 
+    const tenantId = currentUser?.role === 'ADMIN' ? currentUser.id : currentUser?.parentOwnerId || 1;
+
     if (!isOnline) {
       setPendingSyncCount((prev) => prev + 1);
     } else {
       fetch('/api/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: currentUser?.id, paymentMode: tx.paymentMethod })
-      }).catch((err) => {
-        console.log('Transaction logged locally:', err);
-        setPendingSyncCount((prev) => prev + 1);
-      });
+        body: JSON.stringify({
+          userId: tenantId,
+          receiptNo: tx.receiptNo,
+          cashierName: tx.cashierName,
+          paymentMode: tx.paymentMethod,
+          items: tx.items,
+          subtotal: tx.subtotal,
+          discount: tx.discount,
+          totalAmount: tx.totalAmount,
+          tenderedAmount: tx.tenderedAmount,
+          changeAmount: tx.changeAmount,
+          customerId: tx.customerId,
+          customerName: tx.customerName,
+          paymongoRef: tx.paymongoRef,
+          timestamp: tx.timestamp,
+        })
+      })
+        .then((res) => res.json())
+        .then(() => {
+          fetchTransactions(tenantId);
+        })
+        .catch((err) => {
+          console.log('Transaction logged locally:', err);
+          setPendingSyncCount((prev) => prev + 1);
+        });
     }
   };
 
@@ -287,6 +389,11 @@ export default function App() {
 
   // --- STAFF ACCOUNTS HANDLERS ---
   const handleSaveStaffAccount = (user: UserProfile) => {
+    if (user.role === 'ADMIN') {
+      alert('Security Policy Enforcement: Logged-in Owners are strictly prohibited from creating or escalating staff accounts to Owner (ADMIN) account role.');
+      console.warn('Illegal Owner Account Prevention: Blocked creation of staff account with ADMIN role');
+      return;
+    }
     setStaffAccounts((prev) => [...prev, user]);
   };
 
@@ -313,7 +420,7 @@ export default function App() {
   // Role Guard for Tab Access
   useEffect(() => {
     if (currentUser && currentUser.role !== 'ADMIN') {
-      if (['bplo', 'eod', 'subscription'].includes(activeTab)) {
+      if (['bplo', 'eod', 'subscription', 'settings'].includes(activeTab)) {
         setActiveTab('pos');
       }
     }
@@ -410,7 +517,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'eod' && (
+        {activeTab === 'eod' && currentUser.role === 'ADMIN' && (
           <EODModule
             transactions={transactions}
             menuItems={menuItems}
@@ -420,7 +527,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'bplo' && (
+        {activeTab === 'bplo' && currentUser.role === 'ADMIN' && (
           <BploTaxModule
             stats={taxReliefStats}
             settings={settings}
@@ -428,14 +535,14 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'subscription' && (
+        {activeTab === 'subscription' && currentUser.role === 'ADMIN' && (
           <SubscriptionModule
             activeTier={settings.activeTier}
             onSelectTier={handleSelectTier}
           />
         )}
 
-        {activeTab === 'settings' && (
+        {activeTab === 'settings' && currentUser.role === 'ADMIN' && (
           <SettingsModule
             settings={settings}
             staffAccounts={staffAccounts}
@@ -452,7 +559,11 @@ export default function App() {
       <div className="h-9 bg-slate-900 text-slate-200 border-t border-slate-800 flex items-center px-4 sm:px-6 text-[11px] font-medium tracking-wide justify-between shrink-0 sticky bottom-0 z-20">
         <span className="truncate flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-orange-500 animate-pulse"></span>
-          <span>MARIKINA TAX RELIEF TRACKER: Gross ₱{taxReliefStats.currentAnnualGross.toLocaleString()} / ₱{taxReliefStats.annualGrossThreshold.toLocaleString()} cap. ({Math.max(0, taxReliefStats.annualGrossThreshold - taxReliefStats.currentAnnualGross).toLocaleString()} remaining)</span>
+          {currentUser.role === 'ADMIN' ? (
+            <span>MARIKINA TAX RELIEF TRACKER: Gross ₱{taxReliefStats.currentAnnualGross.toLocaleString()} / ₱{taxReliefStats.annualGrossThreshold.toLocaleString()} cap. ({Math.max(0, taxReliefStats.annualGrossThreshold - taxReliefStats.currentAnnualGross).toLocaleString()} remaining)</span>
+          ) : (
+            <span>CARICLOUD OPERATIONAL COUNTER: Shift Active • Marikina City SME Ordinance No. 2026-018</span>
+          )}
         </span>
         <span className="ml-4 font-mono text-[10px] uppercase font-bold shrink-0 bg-slate-800 text-slate-300 px-2.5 py-1 rounded-full border border-slate-700">
           OOS SYNC: {isOnline ? 'ACTIVE' : `OFFLINE (${pendingSyncCount} QUEUED)`}

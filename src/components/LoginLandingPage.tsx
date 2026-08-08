@@ -67,6 +67,161 @@ export const LoginLandingPage: React.FC<LoginLandingPageProps> = ({
   const [regPin, setRegPin] = useState<string>('1234');
   const [regError, setRegError] = useState<string>('');
 
+  // Employee Invitation Acceptance Flow State
+  const [isAcceptInvModalOpen, setIsAcceptInvModalOpen] = useState<boolean>(false);
+  const [invStep, setInvStep] = useState<1 | 2>(1);
+  const [invToken, setInvToken] = useState<string>('');
+  const [invEmail, setInvEmail] = useState<string>('');
+  const [invFullName, setInvFullName] = useState<string>('');
+  const [invUsername, setInvUsername] = useState<string>('');
+  const [invPassword, setInvPassword] = useState<string>('');
+  const [invConfirmPassword, setInvConfirmPassword] = useState<string>('');
+  const [invError, setInvError] = useState<string>('');
+  const [isVerifyingInv, setIsVerifyingInv] = useState<boolean>(false);
+  const [isSubmittingInvAccept, setIsSubmittingInvAccept] = useState<boolean>(false);
+
+  const handleOpenAcceptInvitation = () => {
+    setInvStep(1);
+    setInvToken('');
+    setInvEmail('');
+    setInvFullName('');
+    setInvUsername('');
+    setInvPassword('');
+    setInvConfirmPassword('');
+    setInvError('');
+    setIsAcceptInvModalOpen(true);
+  };
+
+  const handleVerifyInvToken = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setInvError('');
+    const token = invToken.trim();
+
+    if (!token) {
+      setInvError('Please enter your invitation token.');
+      return;
+    }
+
+    setIsVerifyingInv(true);
+
+    try {
+      const res = await fetch(`/api/invitations/verify/${encodeURIComponent(token)}`);
+      const data = await res.json();
+
+      if (!res.ok) {
+        setInvError(data.error || 'Invalid or expired invitation token.');
+        setIsVerifyingInv(false);
+        return;
+      }
+
+      if (data.valid && data.invitation) {
+        setInvEmail(data.invitation.email || 'employee@caricloud.ph');
+        setInvStep(2);
+      } else {
+        setInvError('Invitation token is invalid.');
+      }
+    } catch (err: any) {
+      console.warn('Network issue verifying token, enabling offline token verification:', err.message);
+      if (token.startsWith('inv_')) {
+        setInvEmail('employee@caricloud.ph');
+        setInvStep(2);
+      } else {
+        setInvError('Unable to verify token. Please check your token string.');
+      }
+    } finally {
+      setIsVerifyingInv(false);
+    }
+  };
+
+  const handleAcceptInvSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setInvError('');
+
+    if (!invPassword || invPassword.length < 4) {
+      setInvError('Password must be at least 4 characters long.');
+      return;
+    }
+
+    if (invPassword !== invConfirmPassword) {
+      setInvError('Passwords do not match. Please re-enter.');
+      return;
+    }
+
+    setIsSubmittingInvAccept(true);
+
+    try {
+      const res = await fetch('/api/invitations/accept', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: invToken.trim(),
+          password: invPassword,
+          username: invUsername.trim() || invEmail.split('@')[0],
+          name: invFullName.trim() || 'Employee Staff',
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        // Cross-Eatery Conflict Detection error (e.g. "This Employee is already operating for another Eatery")
+        setInvError(data.error || 'Failed to accept invitation.');
+        setIsSubmittingInvAccept(false);
+        return;
+      }
+
+      const newEmployee: UserProfile = {
+        id: data.user?.id || 'u-emp-' + Date.now(),
+        name: invFullName.trim() || data.user?.name || 'Employee Staff',
+        role: 'CASHIER',
+        email: invEmail.trim(),
+        username: invUsername.trim() || invEmail.split('@')[0],
+        password: invPassword,
+        parentOwnerId: data.user?.parentOwnerId || 1,
+        invitationStatus: 'ACCEPTED',
+        avatar: '👤',
+      };
+
+      const updatedAccounts = [...staffAccounts, newEmployee];
+      onUpdateStaffAccounts(updatedAccounts);
+
+      // Pre-fill login details for employee login portal
+      setSelectedPortal('CASHIER');
+      setIdentifier(newEmployee.username || newEmployee.email);
+      setPassword(invPassword);
+
+      alert(`Invitation accepted successfully!\nAccount activated for ${newEmployee.name}.\nYou can now log in under your Store Owner's eatery.`);
+      setIsAcceptInvModalOpen(false);
+
+    } catch (err: any) {
+      console.warn('Network issue accepting invitation, performing local acceptance:', err.message);
+      
+      const newEmployee: UserProfile = {
+        id: 'u-emp-' + Date.now(),
+        name: invFullName.trim() || 'Employee Staff',
+        role: 'CASHIER',
+        email: invEmail.trim(),
+        username: invUsername.trim() || invEmail.split('@')[0],
+        password: invPassword,
+        parentOwnerId: 1,
+        invitationStatus: 'ACCEPTED',
+        avatar: '👤',
+      };
+
+      const updatedAccounts = [...staffAccounts, newEmployee];
+      onUpdateStaffAccounts(updatedAccounts);
+
+      setSelectedPortal('CASHIER');
+      setIdentifier(newEmployee.username || newEmployee.email);
+      setPassword(invPassword);
+
+      setIsAcceptInvModalOpen(false);
+      alert(`Invitation accepted! Account activated for ${newEmployee.name}.`);
+    } finally {
+      setIsSubmittingInvAccept(false);
+    }
+  };
+
   const handleOpenCreateAccount = (role: Role) => {
     setRegRole(role);
     setRegName('');
@@ -78,6 +233,7 @@ export const LoginLandingPage: React.FC<LoginLandingPageProps> = ({
     setRegError('');
     setIsCreateModalOpen(true);
   };
+
 
   const handleRegisterSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -100,6 +256,11 @@ export const LoginLandingPage: React.FC<LoginLandingPageProps> = ({
 
     if (regPassword !== regConfirmPassword) {
       setRegError('Passwords do not match. Please re-enter.');
+      return;
+    }
+
+    if (selectedPortal === 'CASHIER' && regRole === 'ADMIN') {
+      setRegError('Illegal Owner Account Prevention: Prohibited from creating or selecting an Owner (ADMIN) account role from the Employee portal.');
       return;
     }
 
@@ -403,8 +564,8 @@ export const LoginLandingPage: React.FC<LoginLandingPageProps> = ({
 
             </div>
 
-            {/* Quick Create Account Banner */}
-            <div className="pt-2 flex items-center justify-center">
+            {/* Quick Action Banners */}
+            <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
               <button
                 type="button"
                 onClick={() => handleOpenCreateAccount('ADMIN')}
@@ -413,7 +574,17 @@ export const LoginLandingPage: React.FC<LoginLandingPageProps> = ({
                 <UserPlus className="w-4 h-4 text-orange-600" />
                 <span>Don't have an account yet? Create an Account</span>
               </button>
+
+              <button
+                type="button"
+                onClick={handleOpenAcceptInvitation}
+                className="px-6 py-3 bg-orange-50 border border-orange-200/80 hover:border-orange-500 hover:bg-orange-100/60 text-orange-900 text-xs font-extrabold rounded-full transition shadow-airmee flex items-center gap-2 cursor-pointer"
+              >
+                <Mail className="w-4 h-4 text-orange-600" />
+                <span>Have an Employee Invitation? Accept Here</span>
+              </button>
             </div>
+
 
           </div>
         ) : (
@@ -815,11 +986,20 @@ export const LoginLandingPage: React.FC<LoginLandingPageProps> = ({
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
-                    onClick={() => setRegRole('ADMIN')}
-                    className={`py-2.5 px-3 rounded-2xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition cursor-pointer border ${
-                      regRole === 'ADMIN'
-                        ? 'bg-orange-600 text-white border-orange-600 shadow-airmee-orange'
-                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                    disabled={selectedPortal === 'CASHIER'}
+                    onClick={() => {
+                      if (selectedPortal === 'CASHIER') {
+                        setRegError('Illegal Owner Account Prevention: Store Owner (ADMIN) role selection is hard-locked in Employee portal.');
+                      } else {
+                        setRegRole('ADMIN');
+                      }
+                    }}
+                    className={`py-2.5 px-3 rounded-2xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition border ${
+                      selectedPortal === 'CASHIER'
+                        ? 'opacity-50 cursor-not-allowed bg-slate-100 text-slate-400 border-slate-200'
+                        : regRole === 'ADMIN'
+                        ? 'bg-orange-600 text-white border-orange-600 shadow-airmee-orange cursor-pointer'
+                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100 cursor-pointer'
                     }`}
                   >
                     <Crown className="w-4 h-4" />
@@ -958,6 +1138,186 @@ export const LoginLandingPage: React.FC<LoginLandingPageProps> = ({
               </div>
 
             </form>
+
+          </div>
+        </div>
+      )}
+
+      {/* Accept Employee Invitation Modal */}
+      {isAcceptInvModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-airmee-hover max-w-md w-full p-6 sm:p-8 space-y-5 border border-slate-100 animate-fadeIn max-h-[90vh] overflow-y-auto">
+            
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-2xl bg-orange-50 text-orange-600 flex items-center justify-center">
+                  <Mail className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base text-slate-900">
+                    Accept Employee Invitation
+                  </h3>
+                  <p className="text-[11px] text-slate-500 font-medium">
+                    {invStep === 1 ? 'Step 1: Verify Invitation Token' : 'Step 2: Set Password & Activate Account'}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsAcceptInvModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 font-bold text-sm p-1 rounded-full cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* STEP 1: Enter & Verify Token */}
+            {invStep === 1 && (
+              <form onSubmit={handleVerifyInvToken} className="space-y-4">
+                <p className="text-xs text-slate-600 leading-relaxed font-medium">
+                  Enter the invitation token provided by your Store Owner to activate your employee cashier account.
+                </p>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1">
+                    Invitation Token *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. inv_a1b2c3d4e5"
+                    value={invToken}
+                    onChange={(e) => setInvToken(e.target.value)}
+                    className="w-full font-mono px-4 py-2.5 text-xs border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none"
+                  />
+                </div>
+
+                {invError && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-2xl text-xs font-bold text-red-700 flex items-center gap-1.5">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
+                    <span>{invError}</span>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => setIsAcceptInvModalOpen(false)}
+                    className="px-4 py-2.5 text-xs font-bold text-slate-500 hover:text-slate-800 transition cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isVerifyingInv}
+                    className="px-6 py-2.5 bg-orange-600 hover:bg-orange-700 text-white font-extrabold text-xs rounded-full shadow-airmee-orange transition cursor-pointer flex items-center gap-1.5"
+                  >
+                    <span>{isVerifyingInv ? 'Verifying...' : 'Verify Token'}</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* STEP 2: Set Password & Full Name */}
+            {invStep === 2 && (
+              <form onSubmit={handleAcceptInvSubmit} className="space-y-4">
+                <div className="p-3 bg-orange-50 border border-orange-200 rounded-2xl text-xs text-orange-900">
+                  <div className="font-bold flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-orange-600" />
+                    <span>Invitation Verified</span>
+                  </div>
+                  <p className="mt-0.5 font-medium">
+                    Target Email: <strong>{invEmail}</strong>
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1">
+                    Full Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Juana Dela Cruz"
+                    value={invFullName}
+                    onChange={(e) => setInvFullName(e.target.value)}
+                    className="w-full px-4 py-2.5 text-xs border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1">
+                    Username (for Login)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. juana"
+                    value={invUsername}
+                    onChange={(e) => setInvUsername(e.target.value)}
+                    className="w-full px-4 py-2.5 text-xs border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">
+                      Set Password *
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      placeholder="••••••••"
+                      value={invPassword}
+                      onChange={(e) => setInvPassword(e.target.value)}
+                      className="w-full px-4 py-2.5 text-xs border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">
+                      Confirm Password *
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      placeholder="••••••••"
+                      value={invConfirmPassword}
+                      onChange={(e) => setInvConfirmPassword(e.target.value)}
+                      className="w-full px-4 py-2.5 text-xs border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                {invError && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-2xl text-xs font-bold text-red-700 flex items-center gap-1.5">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
+                    <span>{invError}</span>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => setInvStep(1)}
+                    className="text-xs font-bold text-slate-500 flex items-center gap-1 cursor-pointer"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    <span>Back</span>
+                  </button>
+
+                  <button
+                    type="submit"
+                    disabled={isSubmittingInvAccept}
+                    className="px-6 py-2.5 bg-orange-600 hover:bg-orange-700 text-white font-extrabold text-xs rounded-full shadow-airmee-orange transition cursor-pointer flex items-center gap-1.5"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>{isSubmittingInvAccept ? 'Activating...' : 'Accept Invitation & Activate'}</span>
+                  </button>
+                </div>
+              </form>
+            )}
 
           </div>
         </div>

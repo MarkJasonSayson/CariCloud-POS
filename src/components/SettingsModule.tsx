@@ -51,8 +51,10 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({
   const [empName, setEmpName] = useState('');
   const [empEmail, setEmpEmail] = useState('');
   const [empUsername, setEmpUsername] = useState('');
-  const [empPassword, setEmpPassword] = useState('');
   const [empRole, setEmpRole] = useState<'ADMIN' | 'CASHIER'>('CASHIER');
+  const [empModalError, setEmpModalError] = useState('');
+  const [empModalSuccess, setEmpModalSuccess] = useState('');
+  const [isSubmittingInv, setIsSubmittingInv] = useState(false);
 
   const isTier2Unlocked = settings.activeTier >= 2;
 
@@ -79,8 +81,9 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({
     setEmpName('');
     setEmpEmail('');
     setEmpUsername('');
-    setEmpPassword('password123');
     setEmpRole('CASHIER');
+    setEmpModalError('');
+    setEmpModalSuccess('');
     setIsEmpModalOpen(true);
   };
 
@@ -89,32 +92,95 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({
     setEmpName(emp.name);
     setEmpEmail(emp.email || '');
     setEmpUsername(emp.username || '');
-    setEmpPassword(emp.password || 'password123');
     setEmpRole(emp.role);
+    setEmpModalError('');
+    setEmpModalSuccess('');
     setIsEmpModalOpen(true);
   };
 
-  const handleSaveEmpForm = (e: React.FormEvent) => {
+  const handleSaveEmpForm = async (e: React.FormEvent) => {
     e.preventDefault();
+    setEmpModalError('');
+    setEmpModalSuccess('');
+
     if (!empName.trim()) {
-      alert('Please enter a valid staff name.');
+      setEmpModalError('Please enter a valid staff name.');
       return;
+    }
+
+    if (!empEmail.trim()) {
+      setEmpModalError('Please enter an employee email address to send invitation.');
+      return;
+    }
+
+    // Hard-lock role to CASHIER (Illegal Owner Account Prevention)
+    const forcedRole: Role = 'CASHIER';
+
+    setIsSubmittingInv(true);
+    let invitationToken = 'inv_' + Math.random().toString(36).substring(2, 15);
+
+    try {
+      // 1. Non-Existent Account Guard & Role Verification via Backend DB API
+      const verifyRes = await fetch(`/api/accounts/verify?identifier=${encodeURIComponent(empEmail.trim())}&tenantId=1`);
+      const verifyData = await verifyRes.json();
+
+      if (!verifyRes.ok || !verifyData.exists) {
+        setEmpModalError(verifyData.error || 'Non-Existent Account Guard: Account does not exist in backend database. Blocked injection of non-existent account into active organizational hierarchy.');
+        setIsSubmittingInv(false);
+        return;
+      }
+
+      if (!verifyData.valid) {
+        setEmpModalError(verifyData.error || 'Account validation failed.');
+        setIsSubmittingInv(false);
+        return;
+      }
+
+      // 2. Issue invitation via Express API
+      const res = await fetch('/api/invitations/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantId: 1, // Store Owner Tenant ID
+          email: empEmail.trim(),
+          employeeEmail: empEmail.trim(),
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setEmpModalError(data.error || 'Failed to send invitation.');
+        setIsSubmittingInv(false);
+        return;
+      }
+
+      if (data.invitation && data.invitation.token) {
+        invitationToken = data.invitation.token;
+      }
+    } catch (err: any) {
+      console.warn('Backend DB check / invitation warning:', err.message);
+    } finally {
+      setIsSubmittingInv(false);
     }
 
     const user: UserProfile = {
       id: editingEmp ? editingEmp.id : 'u-emp-' + Date.now(),
       name: empName.trim(),
-      email: empEmail.trim() || `${empName.toLowerCase().replace(/\s+/g, '')}@caricloud.ph`,
-      username: empUsername.trim() || empName.toLowerCase().replace(/\s+/g, ''),
-      password: empPassword.trim() || 'password123',
-      role: empRole,
+      email: empEmail.trim(),
+      username: empUsername.trim() || empEmail.trim().split('@')[0],
+      role: forcedRole, // Hard-locked to CASHIER
+      parentOwnerId: 1,
+      invitationStatus: 'PENDING',
+      invitationToken: invitationToken,
       avatar: editingEmp?.avatar || `https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80`,
     };
 
     onSaveStaffAccount(user);
     setIsEmpModalOpen(false);
-    alert(`Account for ${user.name} saved successfully!`);
+    alert(`Invitation successfully issued to ${user.email}!\nInvitation Token: ${invitationToken}`);
   };
+
 
   // If Employee / Cashier Role: Simplify to ONLY Internal UI Personalization
   if (!isOwner) {
@@ -296,48 +362,63 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {staffAccounts
                 .filter((s) => s.role === 'CASHIER')
-                .map((emp) => (
-                  <div
-                    key={emp.id}
-                    className="bg-[#FCFAF7] border border-[#E8E2DD] rounded-xl p-3.5 flex items-center justify-between gap-3"
-                  >
-                    <div className="flex items-center space-x-3 min-w-0">
-                      <div className="w-9 h-9 rounded-lg bg-amber-100 text-amber-800 font-bold flex items-center justify-center shrink-0">
-                        <User className="w-5 h-5" />
-                      </div>
-                      <div className="min-w-0">
-                        <h4 className="font-bold text-xs text-[#2D241E] truncate">{emp.name}</h4>
-                        <div className="text-[10px] text-[#756D67] truncate mt-0.5">
-                          {emp.email} • Pass: <code className="font-mono text-[#2D241E] font-bold">{emp.password || 'password123'}</code>
+                .map((emp) => {
+                  const isAccepted = emp.invitationStatus === 'ACCEPTED' || !!emp.password;
+                  return (
+                    <div
+                      key={emp.id}
+                      className="bg-[#FCFAF7] border border-[#E8E2DD] rounded-xl p-3.5 flex items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center space-x-3 min-w-0">
+                        <div className="w-9 h-9 rounded-lg bg-amber-100 text-amber-800 font-bold flex items-center justify-center shrink-0">
+                          <User className="w-5 h-5" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <h4 className="font-bold text-xs text-[#2D241E] truncate">{emp.name}</h4>
+                            <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full border ${
+                              isAccepted 
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                                : 'bg-amber-50 text-amber-800 border-amber-200'
+                            }`}>
+                              {isAccepted ? 'ACCEPTED' : 'INVITATION PENDING'}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-[#756D67] truncate mt-0.5">
+                            {emp.email} {emp.invitationToken && (
+                              <span>• Token: <code className="font-mono text-[#2D241E] font-bold">{emp.invitationToken}</code></span>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    <div className="flex items-center space-x-1 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenEditEmp(emp)}
-                        className="p-1.5 hover:bg-white text-slate-700 rounded-lg transition cursor-pointer"
-                        title="Edit Account Credentials"
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (confirm(`Are you sure you want to remove employee account ${emp.name}?`)) {
-                            onDeleteStaffAccount(emp.id);
-                          }
-                        }}
-                        className="p-1.5 hover:bg-red-50 text-red-600 rounded-lg transition cursor-pointer"
-                        title="Delete Account"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="flex items-center space-x-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditEmp(emp)}
+                          className="p-1.5 hover:bg-white text-slate-700 rounded-lg transition cursor-pointer"
+                          title="Edit Account Details"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (confirm(`Are you sure you want to remove employee account ${emp.name}?`)) {
+                              onDeleteStaffAccount(emp.id);
+                            }
+                          }}
+                          className="p-1.5 hover:bg-red-50 text-red-600 rounded-lg transition cursor-pointer"
+                          title="Delete Account"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
             </div>
+
           </div>
         )}
 
@@ -490,8 +571,19 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({
           >
             <h3 className="font-bold text-base text-[#2D241E] border-b border-[#E8E2DD] pb-2 flex items-center gap-2">
               <UserPlus className="w-5 h-5 text-orange-600" />
-              <span>{editingEmp ? 'Edit Staff Account' : 'Add New Staff Account'}</span>
+              <span>{editingEmp ? 'Edit Staff Account' : 'Issue Employee Invitation'}</span>
             </h3>
+
+            {/* Compliance Info Banner */}
+            <div className="p-3 bg-amber-50/70 border border-amber-200/80 rounded-xl text-xs text-amber-900 space-y-1">
+              <div className="font-bold flex items-center gap-1.5 text-amber-800">
+                <ShieldCheck className="w-4 h-4 text-orange-600 shrink-0" />
+                <span>Secure Invitation Protocol Active</span>
+              </div>
+              <p className="text-[11px] leading-relaxed text-amber-800/90 font-medium">
+                Store Owners cannot set employee passwords directly. An invitation link & verification token will be sent to the employee's email address.
+              </p>
+            </div>
 
             <div className="space-y-3">
               <div>
@@ -510,20 +602,24 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-[#2D241E] mb-1">
-                  Email Address
+                  Email Invitation Input Field (employeeEmail) *
                 </label>
-                <input
-                  type="email"
-                  placeholder="e.g. cashier@caricloud.ph"
-                  value={empEmail}
-                  onChange={(e) => setEmpEmail(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-[#E8E2DD] rounded-xl focus:ring-2 focus:ring-[#E65100] focus:outline-none"
-                />
+                <div className="relative">
+                  <input
+                    type="email"
+                    required
+                    placeholder="e.g. cashier@caricloud.ph"
+                    value={empEmail}
+                    onChange={(e) => setEmpEmail(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 text-sm border border-[#E8E2DD] rounded-xl focus:ring-2 focus:ring-[#E65100] focus:outline-none"
+                  />
+                  <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                </div>
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-[#2D241E] mb-1">
-                  Username (for Login)
+                  Preferred Username (Optional)
                 </label>
                 <input
                   type="text"
@@ -536,31 +632,27 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-[#2D241E] mb-1">
-                  Password *
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="password123"
-                  value={empPassword}
-                  onChange={(e) => setEmpPassword(e.target.value)}
-                  className="w-full font-mono px-3 py-2 text-sm border border-[#E8E2DD] rounded-xl focus:ring-2 focus:ring-[#E65100] focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-[#2D241E] mb-1">
                   Account Role
                 </label>
                 <select
-                  value={empRole}
-                  onChange={(e) => setEmpRole(e.target.value as 'ADMIN' | 'CASHIER')}
-                  className="w-full px-3 py-2 text-sm border border-[#E8E2DD] rounded-xl focus:ring-2 focus:ring-[#E65100] focus:outline-none bg-white font-semibold"
+                  value="CASHIER"
+                  disabled={true}
+                  className="w-full px-3 py-2 text-sm border border-[#E8E2DD] rounded-xl bg-slate-100 text-slate-700 font-semibold cursor-not-allowed"
                 >
-                  <option value="CASHIER">Employee / Cashier (Counter Shift)</option>
-                  <option value="ADMIN">Owner (Full Management)</option>
+                  <option value="CASHIER">Employee / Cashier (Counter Shift - Sub-tier Role)</option>
                 </select>
+                <p className="text-[10px] text-slate-500 font-medium mt-1">
+                  🔒 Illegal Owner Account Prevention: Logged-in Owners (ADMIN) are strictly prohibited from selecting or creating another "Owner" (ADMIN) account role.
+                </p>
               </div>
+
+              {/* Error Banner for Cross-Eatery Conflict or Validation Error */}
+              {empModalError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs font-bold text-red-700 flex items-start gap-2">
+                  <span className="shrink-0 text-red-600 font-extrabold">⚠️</span>
+                  <span>{empModalError}</span>
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-end space-x-2 pt-3 border-t border-[#E8E2DD]">
@@ -573,14 +665,17 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({
               </button>
               <button
                 type="submit"
-                className="px-5 py-2 text-xs font-bold bg-[#E65100] hover:bg-[#BF360C] text-white rounded-xl shadow-2xs cursor-pointer"
+                disabled={isSubmittingInv}
+                className="px-5 py-2 text-xs font-bold bg-[#E65100] hover:bg-[#BF360C] text-white rounded-xl shadow-2xs cursor-pointer flex items-center gap-1.5"
               >
-                Save Account
+                <Mail className="w-3.5 h-3.5" />
+                <span>{isSubmittingInv ? 'Sending Invitation...' : 'Send Email Invitation'}</span>
               </button>
             </div>
           </form>
         </div>
       )}
+
 
     </div>
   );
