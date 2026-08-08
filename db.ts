@@ -10,7 +10,8 @@ const db = mysql.createPool({
   user: 'root',
   password: process.env.DB_PASSWORD,
   database: 'caricloud_db',
-  port: 3306
+  port: 3306,
+  connectionLimit: 50 // Added to prevent HTTP 500 crashes during concurrent bursts
 });
 
 // Test the connection

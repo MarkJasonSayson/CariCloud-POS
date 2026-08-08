@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  X, 
-  Banknote, 
-  QrCode, 
-  BookOpen, 
-  CheckCircle2, 
-  AlertTriangle, 
-  ShieldCheck, 
+import {
+  X,
+  Banknote,
+  QrCode,
+  BookOpen,
+  CheckCircle2,
+  AlertTriangle,
+  ShieldCheck,
   RefreshCw
 } from 'lucide-react';
 import { CartItem, DiscountDetails, PaymentMethod, CustomerCredit, Transaction } from '../types';
@@ -20,6 +20,7 @@ interface CheckoutModalProps {
   totalAmount: number;
   customers: CustomerCredit[];
   cashierName: string;
+  currentUserRole?: string; // Added to enforce role-based credit override
   onComplete: (tx: Transaction) => void;
 }
 
@@ -32,13 +33,14 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   totalAmount,
   customers,
   cashierName,
+  currentUserRole, // Destructure here
   onComplete,
 }) => {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
 
   // CASH State
   const [tenderedAmount, setTenderedAmount] = useState<number>(Math.ceil(totalAmount));
-  
+
   // E-WALLET State
   const [qrLoading, setQrLoading] = useState<boolean>(false);
   const [paymongoData, setPaymongoData] = useState<{ qrCodeUrl: string; paymongoRef: string; checkoutUrl?: string } | null>(null);
@@ -241,6 +243,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       }
 
       if (isOverCreditLimit && !adminOverrideGranted) {
+        // Block non-admin users from overriding credit limits
+        if (currentUserRole !== 'ADMIN') {
+          alert("CREDIT LIMIT EXCEEDED. Administrator override required. Cashiers cannot bypass credit limits.");
+          return;
+        }
+
         const confirmOverride = confirm(
           `Customer ${selectedCustomer.name} exceeds their credit limit (₱${selectedCustomer.currentDebt + totalAmount} total vs ₱${selectedCustomer.creditLimit} limit). Approve Store Owner credit extension override?`
         );
@@ -287,7 +295,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   return (
     <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-3xl shadow-2xl max-w-2xl w-full border border-slate-100 overflow-hidden flex flex-col max-h-[90vh]">
-        
+
         {/* Header */}
         <div className="p-6 bg-slate-900 text-white flex items-center justify-between">
           <div>
@@ -304,7 +312,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
         {/* Modal Body */}
         <div className="p-6 flex-1 overflow-y-auto space-y-6">
-          
+
           {/* Order Summary Ribbon */}
           <div className="bg-orange-50/80 border border-orange-100 rounded-2xl p-4 flex items-center justify-between">
             <div>
@@ -324,15 +332,14 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               Payment Path
             </label>
             <div className="grid grid-cols-3 gap-3">
-              
+
               <button
                 type="button"
                 onClick={() => setPaymentMethod('CASH')}
-                className={`p-4 rounded-2xl border font-extrabold text-xs flex flex-col items-center gap-2 transition cursor-pointer ${
-                  paymentMethod === 'CASH'
-                    ? 'bg-slate-900 text-white border-slate-900 shadow-airmee'
-                    : 'bg-slate-50 text-slate-600 border-slate-200/80 hover:bg-slate-100'
-                }`}
+                className={`p-4 rounded-2xl border font-extrabold text-xs flex flex-col items-center gap-2 transition cursor-pointer ${paymentMethod === 'CASH'
+                  ? 'bg-slate-900 text-white border-slate-900 shadow-airmee'
+                  : 'bg-slate-50 text-slate-600 border-slate-200/80 hover:bg-slate-100'
+                  }`}
               >
                 <Banknote className="w-5 h-5 stroke-[2]" />
                 <span>Cash Tender</span>
@@ -341,11 +348,10 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               <button
                 type="button"
                 onClick={() => setPaymentMethod('E_WALLET')}
-                className={`p-4 rounded-2xl border font-extrabold text-xs flex flex-col items-center gap-2 transition cursor-pointer ${
-                  paymentMethod === 'E_WALLET'
-                    ? 'bg-orange-500 text-white border-orange-500 shadow-airmee-orange'
-                    : 'bg-slate-50 text-slate-600 border-slate-200/80 hover:bg-slate-100'
-                }`}
+                className={`p-4 rounded-2xl border font-extrabold text-xs flex flex-col items-center gap-2 transition cursor-pointer ${paymentMethod === 'E_WALLET'
+                  ? 'bg-orange-500 text-white border-orange-500 shadow-airmee-orange'
+                  : 'bg-slate-50 text-slate-600 border-slate-200/80 hover:bg-slate-100'
+                  }`}
               >
                 <QrCode className="w-5 h-5 stroke-[2]" />
                 <span>E-Wallet (QR Ph)</span>
@@ -354,11 +360,10 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               <button
                 type="button"
                 onClick={() => setPaymentMethod('LISTAHAN_CREDIT')}
-                className={`p-4 rounded-2xl border font-extrabold text-xs flex flex-col items-center gap-2 transition cursor-pointer ${
-                  paymentMethod === 'LISTAHAN_CREDIT'
-                    ? 'bg-slate-900 text-white border-slate-900 shadow-airmee'
-                    : 'bg-slate-50 text-slate-600 border-slate-200/80 hover:bg-slate-100'
-                }`}
+                className={`p-4 rounded-2xl border font-extrabold text-xs flex flex-col items-center gap-2 transition cursor-pointer ${paymentMethod === 'LISTAHAN_CREDIT'
+                  ? 'bg-slate-900 text-white border-slate-900 shadow-airmee'
+                  : 'bg-slate-50 text-slate-600 border-slate-200/80 hover:bg-slate-100'
+                  }`}
               >
                 <BookOpen className="w-5 h-5 stroke-[2]" />
                 <span>Listahan (Credit)</span>
@@ -409,11 +414,10 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
               {/* Change Box */}
               <div
-                className={`p-4 rounded-2xl border flex items-center justify-between ${
-                  isCashInsufficient
-                    ? 'bg-red-50 border-red-200 text-red-950'
-                    : 'bg-emerald-50 border-emerald-200 text-emerald-950'
-                }`}
+                className={`p-4 rounded-2xl border flex items-center justify-between ${isCashInsufficient
+                  ? 'bg-red-50 border-red-200 text-red-950'
+                  : 'bg-emerald-50 border-emerald-200 text-emerald-950'
+                  }`}
               >
                 <div>
                   <span className="text-xs font-extrabold uppercase tracking-widest block text-slate-500">

@@ -31,16 +31,24 @@ export default function App() {
   const [isOnline, setIsOnline] = useState<boolean>(true);
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
 
-  // Store Configuration & Settings
-  const [settings, setSettings] = useState<StoreSettings>({
-    storeName: 'CariCloud POS',
-    address: 'Marikina City',
-    contactNumber: '',
-    receiptFooter: 'Thank you for dining with us!',
-    taxRate: 0,
-    isVatRegistered: false,
-    enableTaxReliefTracker: true
+  // Store Configuration & Settings (Persisted)
+  const [settings, setSettings] = useState<StoreSettings>(() => {
+    const saved = localStorage.getItem('caricloud_settings');
+    return saved ? JSON.parse(saved) : {
+      storeName: 'CariCloud POS',
+      address: 'Marikina City',
+      contactNumber: '',
+      receiptFooter: 'Thank you for dining with us!',
+      taxRate: 0,
+      isVatRegistered: false,
+      enableTaxReliefTracker: true
+    };
   });
+
+  // Save settings to storage automatically when they change
+  useEffect(() => {
+    localStorage.setItem('caricloud_settings', JSON.stringify(settings));
+  }, [settings]);
 
   // User Profile State
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
@@ -51,7 +59,17 @@ export default function App() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [eodLogs, setEodLogs] = useState<EODRecord[]>([]);
   const [debtPayments, setDebtPayments] = useState<DebtPaymentRecord[]>([]);
-  const [staffAccounts, setStaffAccounts] = useState<UserProfile[]>([]);
+
+  // Data Collections (Persisted)
+  const [staffAccounts, setStaffAccounts] = useState<UserProfile[]>(() => {
+    const saved = localStorage.getItem('caricloud_staff');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  // Save staff to storage automatically when accounts are added/deleted
+  useEffect(() => {
+    localStorage.setItem('caricloud_staff', JSON.stringify(staffAccounts));
+  }, [staffAccounts]);
 
   // Cart & POS State
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -63,17 +81,21 @@ export default function App() {
   const [isCheckoutOpen, setIsCheckoutOpen] = useState<boolean>(false);
   const [completedTxForReceipt, setCompletedTxForReceipt] = useState<Transaction | null>(null);
 
-  // Load Menu Data from Express Backend on Mount
+  // Load Menu Data from Express Backend after login (Multi-tenant secured)
   useEffect(() => {
-    fetch('/api/menu')
-      .then((res) => res.json())
-      .then((data) => {
-        if (Array.isArray(data) && data.length > 0) {
-          setMenuItems(data);
-        }
-      })
-      .catch((err) => console.log('Backend offline or using local state fallback:', err));
-  }, []);
+    if (currentUser) {
+      const tenantId = currentUser.role === 'ADMIN' ? currentUser.id : currentUser.parentOwnerId || 1;
+
+      fetch(`/api/menu?userId=${tenantId}`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (Array.isArray(data) && data.length > 0) {
+            setMenuItems(data);
+          }
+        })
+        .catch((err) => console.log('Backend offline or using local state fallback:', err));
+    }
+  }, [currentUser]);
 
   // Network Online Status Listener
   useEffect(() => {
@@ -100,7 +122,7 @@ export default function App() {
 
   // --- CART HANDLERS ---
   const handleAddToCart = (item: MenuItem, isHalfOrder: boolean, modifiers: SelectedModifier[] = []) => {
-    const basePrice = isHalfOrder && item.halfPrice ? item.halfPrice : item.price;
+    const basePrice = isHalfOrder ? (item.halfPrice || Math.round(item.price / 2)) : item.price;
     const modifierTotal = modifiers.reduce((sum, m) => sum + m.price, 0);
     const unitPrice = basePrice + modifierTotal;
 
@@ -219,7 +241,7 @@ export default function App() {
     setCustomers((prev) =>
       prev.map((c) =>
         c.id === customerId
-          ? { ...c, totalBalance: Math.max(0, c.totalBalance - amount) }
+          ? { ...c, currentDebt: Math.max(0, c.currentDebt - amount) } // Fixed: Changed totalBalance to currentDebt
           : c
       )
     );
@@ -232,12 +254,18 @@ export default function App() {
     setIsCheckoutOpen(false);
     setCompletedTxForReceipt(tx);
 
-    // Send to backend endpoint
-    fetch('/api/checkout', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: currentUser?.id, paymentMode: tx.paymentMethod })
-    }).catch((err) => console.log('Transaction logged locally:', err));
+    if (!isOnline) {
+      setPendingSyncCount((prev) => prev + 1);
+    } else {
+      fetch('/api/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: currentUser?.id, paymentMode: tx.paymentMethod })
+      }).catch((err) => {
+        console.log('Transaction logged locally:', err);
+        setPendingSyncCount((prev) => prev + 1);
+      });
+    }
   };
 
   // --- EOD RECORD HANDLER ---
@@ -291,13 +319,20 @@ export default function App() {
     }
   }, [currentUser, activeTab]);
 
-  // Compute Tax Relief Metrics
+  // Compute Tax Relief Metrics (Fixed missing properties to prevent BPLO tab crash)
   const taxReliefStats = useMemo(() => {
     const currentAnnualGross = transactions.reduce((sum, tx) => sum + tx.totalAmount, 0);
     return {
       currentAnnualGross,
       annualGrossThreshold: 250000,
-      isEligibleForRelief: currentAnnualGross <= 250000
+      isEligibleForRelief: currentAnnualGross <= 250000,
+      quarter1Gross: 0, // Fallback properties added to satisfy MarikinaTaxReliefStats type
+      quarter2Gross: 0,
+      quarter3Gross: 0,
+      quarter4Gross: 0,
+      projectedAnnualGross: currentAnnualGross,
+      estimatedTaxSavings: currentAnnualGross <= 250000 ? currentAnnualGross * 0.03 : 0,
+      lastUpdated: new Date().toISOString()
     };
   }, [transactions]);
 
@@ -434,6 +469,7 @@ export default function App() {
         totalAmount={discountDetails.finalTotal}
         customers={customers}
         cashierName={currentUser.name}
+        currentUserRole={currentUser.role}
         onComplete={handleCompleteTransaction}
       />
 

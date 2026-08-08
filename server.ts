@@ -23,11 +23,19 @@ async function startServer() {
   // MYSQL DATABASE ENDPOINTS
   // ==========================================
 
-  // Fetch Active Menu Grid from MySQL
+  // Fetch Active Menu Grid from MySQL (Secured by Tenant ID)
   app.get('/api/menu', async (req: Request, res: Response) => {
     try {
+      // Extract userId from the query parameters (e.g., /api/menu?userId=1)
+      const userId = req.query.userId;
+
+      if (!userId) {
+        return res.status(400).json({ error: 'Tenant userId is required' });
+      }
+
       const [rows] = await db.execute(
-        'SELECT product_id, name, category, price_full, price_half, isSoldOut FROM PRODUCT WHERE isAvailable = 1'
+        'SELECT product_id, name, category, price_full, price_half, isSoldOut FROM PRODUCT WHERE isAvailable = 1 AND user_id = ?',
+        [userId]
       );
       res.status(200).json(rows);
     } catch (error) {

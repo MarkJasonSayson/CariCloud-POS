@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { 
-  Building2, 
-  ShieldCheck, 
-  AlertTriangle, 
-  Download, 
-  Printer, 
-  Lock, 
-  TrendingUp, 
+import {
+  Building2,
+  ShieldCheck,
+  AlertTriangle,
+  Download,
+  Printer,
+  Lock,
+  TrendingUp,
   FileText
 } from 'lucide-react';
 import { MarikinaTaxReliefStats, StoreSettings, SubscriptionTierLevel } from '../types';
@@ -36,7 +36,7 @@ export const BploTaxModule: React.FC<BploTaxModuleProps> = ({
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-      
+
       {/* Top Banner Card */}
       <div className="bg-white rounded-3xl p-6 shadow-airmee border border-slate-100 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div className="flex items-center space-x-3">
@@ -77,10 +77,10 @@ export const BploTaxModule: React.FC<BploTaxModuleProps> = ({
 
       {/* Main Compliance Dashboard */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        
+
         {/* Left Column: Threshold Progress & Metrics (7 Cols) */}
         <div className="lg:col-span-7 space-y-6">
-          
+
           {/* Progress Card */}
           <div className="bg-white rounded-3xl p-6 shadow-airmee border border-slate-100 space-y-5">
             <div className="flex items-center justify-between">
@@ -88,13 +88,12 @@ export const BploTaxModule: React.FC<BploTaxModuleProps> = ({
                 Annual Gross Sales Tracker
               </span>
               <span
-                className={`text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1.5 ${
-                  isExceeded
-                    ? 'bg-red-50 text-red-800 border border-red-200'
-                    : isApproaching
+                className={`text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1.5 ${isExceeded
+                  ? 'bg-red-50 text-red-800 border border-red-200'
+                  : isApproaching
                     ? 'bg-amber-50 text-amber-800 border border-amber-200'
                     : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                }`}
+                  }`}
               >
                 {isExceeded ? (
                   <>
@@ -128,13 +127,12 @@ export const BploTaxModule: React.FC<BploTaxModuleProps> = ({
 
               <div className="w-full bg-slate-100 h-4 rounded-full overflow-hidden p-0.5 border border-slate-200/60">
                 <div
-                  className={`h-full rounded-full transition-all duration-500 ${
-                    isExceeded
-                      ? 'bg-red-600'
-                      : isApproaching
+                  className={`h-full rounded-full transition-all duration-500 ${isExceeded
+                    ? 'bg-red-600'
+                    : isApproaching
                       ? 'bg-amber-500'
                       : 'bg-gradient-to-r from-orange-500 to-emerald-500'
-                  }`}
+                    }`}
                   style={{ width: `${percentOfThreshold}%` }}
                 />
               </div>
@@ -248,7 +246,7 @@ export const BploTaxModule: React.FC<BploTaxModuleProps> = ({
       {showDeclarationPreview && (
         <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl shadow-2xl max-w-3xl w-full border border-slate-100 overflow-hidden flex flex-col max-h-[90vh]">
-            
+
             <div className="p-5 bg-slate-900 text-white flex items-center justify-between">
               <span className="font-extrabold text-sm">Official Marikina BPLO Declaration Preview</span>
               <button
@@ -261,7 +259,7 @@ export const BploTaxModule: React.FC<BploTaxModuleProps> = ({
 
             {/* Printable Official Document */}
             <div className="p-8 overflow-y-auto space-y-6 text-slate-800 bg-white" id="bplo-form-print">
-              
+
               {/* Official Header */}
               <div className="text-center space-y-1 border-b-2 border-slate-900 pb-4">
                 <p className="text-xs font-semibold tracking-widest text-slate-600 uppercase">
@@ -363,10 +361,10 @@ export const BploTaxModule: React.FC<BploTaxModuleProps> = ({
                 <span className="font-bold text-emerald-900 block">
                   II. Marikina Ordinance 2026-018 Relief Assessment
                 </span>
-                <p className="text-emerald-800">
-                  The subject business entity has declared total annual gross receipts of{' '}
-                  <strong className="underline">₱{stats.currentAnnualGross.toLocaleString()}</strong>, which is{' '}
-                  <strong>WITHIN</strong> the ₱250,000 threshold. Entity is verified <strong>ELIGIBLE</strong> for preferential 100% SME tax relief exemption for calendar year 2026.
+                <p className={`font-bold uppercase ${stats.isEligibleForRelief ? 'text-green-700' : 'text-red-600'}`}>
+                  {stats.isEligibleForRelief
+                    ? "Entity is verified ELIGIBLE for preferential 100% SME tax relief exemption"
+                    : "EXCEEDED - NOT ELIGIBLE FOR SME TAX RELIEF"}
                 </p>
               </div>
 
