@@ -125,13 +125,13 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({
       const verifyData = await verifyRes.json();
 
       if (!verifyRes.ok || !verifyData.exists) {
-        setEmpModalError(verifyData.error || 'Non-Existent Account Guard: Account does not exist in backend database. Blocked injection of non-existent account into active organizational hierarchy.');
+        setEmpModalError('This Employee does not exist');
         setIsSubmittingInv(false);
         return;
       }
 
       if (!verifyData.valid) {
-        setEmpModalError(verifyData.error || 'Account validation failed.');
+        setEmpModalError(verifyData.error || 'This Employee does not exist');
         setIsSubmittingInv(false);
         return;
       }
@@ -150,7 +150,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({
       const data = await res.json();
 
       if (!res.ok) {
-        setEmpModalError(data.error || 'Failed to send invitation.');
+        setEmpModalError(data.error || 'This Employee does not exist');
         setIsSubmittingInv(false);
         return;
       }
@@ -160,6 +160,9 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({
       }
     } catch (err: any) {
       console.warn('Backend DB check / invitation warning:', err.message);
+      setEmpModalError('This Employee does not exist');
+      setIsSubmittingInv(false);
+      return;
     } finally {
       setIsSubmittingInv(false);
     }

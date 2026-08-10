@@ -80,7 +80,7 @@ async function startServer() {
       return res.status(404).json({
         exists: false,
         valid: false,
-        error: 'Non-Existent Account Guard: Account does not exist in backend database. Only registered accounts can be added or invited to active organizational hierarchy.'
+        error: 'This Employee does not exist'
       });
     } catch (error) {
       console.error('Error verifying account:', error);
@@ -92,7 +92,7 @@ async function startServer() {
   app.post('/api/invitations/send', async (req: Request, res: Response) => {
     try {
       const { tenantId, email, employeeEmail } = req.body;
-      const targetEmail = (email || employeeEmail || '').trim().toLowerCase();
+      const targetEmail = (employeeEmail || email || '').trim().toLowerCase();
       const storeOwnerId = tenantId || req.body.tenant_id || 1;
 
       if (!targetEmail) {
@@ -100,16 +100,16 @@ async function startServer() {
       }
 
       // Non-Existent Account Guard & Cross-Eatery Conflict Detection
-      // Query backend DB user table. If account does not exist or has conflicts, reject.
+      // Query backend DB USER table for employeeEmail before proceeding.
       try {
         const [existingUsers]: any = await db.execute(
-          `SELECT user_id, parent_owner_id, user_role, email FROM user WHERE LOWER(email) = ? OR LOWER(username) = ?`,
+          `SELECT user_id, parent_owner_id, user_role, email FROM USER WHERE LOWER(email) = ? OR LOWER(username) = ?`,
           [targetEmail, targetEmail]
         );
 
         if (!Array.isArray(existingUsers) || existingUsers.length === 0) {
           return res.status(404).json({
-            error: "Non-Existent Account Guard: Account does not exist in backend database. Blocked injection of non-existent account into organizational hierarchy."
+            error: "This Employee does not exist"
           });
         }
 
@@ -134,6 +134,7 @@ async function startServer() {
         }
       } catch (dbErr: any) {
         console.warn('DB check error during invitation:', dbErr.message);
+        return res.status(404).json({ error: "This Employee does not exist" });
       }
 
       // Generate secure invitation token & set 48h expiration
@@ -395,7 +396,7 @@ async function startServer() {
         image: image || undefined,
       };
 
-      res.status(201).json({ success: true, item: newItem });
+      res.status(201).json(newItem);
     } catch (error) {
       console.error('Error adding menu item:', error);
       res.status(500).json({ error: 'Internal Server Error while adding menu item.' });

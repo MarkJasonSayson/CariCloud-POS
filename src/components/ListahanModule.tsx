@@ -79,6 +79,10 @@ export const ListahanModule: React.FC<ListahanModuleProps> = ({
   const totalCollectedInFilter = filteredDebtPayments.reduce((sum, p) => sum + p.amount, 0);
 
   const handleOpenAddCustomer = () => {
+    if (currentUserRole !== 'ADMIN') {
+      alert('Access Denied: Only Admins can register new credit accounts.');
+      return;
+    }
     setEditingCustId(null);
     setCustName('');
     setCustContact('');
@@ -90,6 +94,10 @@ export const ListahanModule: React.FC<ListahanModuleProps> = ({
   };
 
   const handleOpenEditCustomer = (c: CustomerCredit) => {
+    if (currentUserRole !== 'ADMIN') {
+      alert('Access Denied: Only Admins can edit credit accounts.');
+      return;
+    }
     setEditingCustId(c.id);
     setCustName(c.name);
     setCustContact(c.contact);
@@ -102,6 +110,10 @@ export const ListahanModule: React.FC<ListahanModuleProps> = ({
 
   const handleSaveCustomerForm = (e: React.FormEvent) => {
     e.preventDefault();
+    if (currentUserRole !== 'ADMIN') {
+      alert('Access Denied: Only Admins can save or modify credit accounts.');
+      return;
+    }
     if (!custName.trim()) {
       alert('Please enter a customer name.');
       return;
@@ -496,7 +508,7 @@ export const ListahanModule: React.FC<ListahanModuleProps> = ({
       )}
 
       {/* Add / Edit Suki Modal */}
-      {isCustomerModalOpen && (
+      {isCustomerModalOpen && currentUserRole === 'ADMIN' && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
           <form
             onSubmit={handleSaveCustomerForm}
