@@ -17,9 +17,44 @@ interface LandingPageProps {
 
 export const LandingPage: React.FC<LandingPageProps> = ({ settings, onNavigateToLogin }) => {
   return (
-    <div className="min-h-screen bg-[#FAFAFA] text-slate-900 font-sans flex flex-col selection:bg-orange-600 selection:text-white relative overflow-hidden">
+    <div className="relative min-h-screen bg-[#FAFAFA] overflow-hidden text-slate-900 font-sans flex flex-col selection:bg-orange-600 selection:text-white">
       
-      {/* 🎨 1. Staggered Y-Axis Text Reveal Animation */}
+      {/* 🌊 Fluid Mesh Gradient Background Layer */}
+      <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
+        <style>{`
+          @keyframes float1 {
+            0% { transform: translate(0px, 0px) scale(1); }
+            33% { transform: translate(30px, -50px) scale(1.1); }
+            66% { transform: translate(-20px, 20px) scale(0.9); }
+            100% { transform: translate(0px, 0px) scale(1); }
+          }
+          @keyframes float2 {
+            0% { transform: translate(0px, 0px) scale(1); }
+            33% { transform: translate(-30px, 50px) scale(1.2); }
+            66% { transform: translate(20px, -20px) scale(0.8); }
+            100% { transform: translate(0px, 0px) scale(1); }
+          }
+          @keyframes float3 {
+            0% { transform: translate(0px, 0px) scale(1); }
+            50% { transform: translate(50px, 50px) scale(1.1); }
+            100% { transform: translate(0px, 0px) scale(1); }
+          }
+          .animate-float1 { animation: float1 15s infinite alternate ease-in-out; }
+          .animate-float2 { animation: float2 18s infinite alternate ease-in-out; }
+          .animate-float3 { animation: float3 20s infinite alternate ease-in-out; }
+        `}</style>
+        
+        {/* Amber Blob */}
+        <div className="absolute top-[-10%] left-[-10%] w-[30rem] h-[30rem] bg-[#FFF3E0] rounded-full mix-blend-multiply filter blur-[100px] opacity-70 animate-float1"></div>
+        
+        {/* Vibrant Orange Blob */}
+        <div className="absolute top-[20%] right-[-10%] w-[35rem] h-[35rem] bg-[#F57C00] rounded-full mix-blend-multiply filter blur-[120px] opacity-30 animate-float2"></div>
+        
+        {/* Deep Orange Blob */}
+        <div className="absolute bottom-[-20%] left-[20%] w-[30rem] h-[30rem] bg-[#E65100] rounded-full mix-blend-multiply filter blur-[100px] opacity-20 animate-float3"></div>
+      </div>
+
+      {/* 🎨 Staggered Y-Axis Text Reveal Animation */}
       <style>{`
         @keyframes staggerYReveal {
           0% {
@@ -57,41 +92,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ settings, onNavigateTo
           opacity: 0;
         }
       `}</style>
-
-      {/* 🌊 2. Scoped Fluid Mesh Gradient / Lava Lamp Background Container */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none z-[-1] bg-[#FAFAFA]">
-        <style>{`
-          @keyframes blob1 {
-            0% { transform: translate(0px, 0px) scale(1); }
-            33% { transform: translate(30px, -50px) scale(1.1); }
-            66% { transform: translate(-20px, 20px) scale(0.9); }
-            100% { transform: translate(0px, 0px) scale(1); }
-          }
-          @keyframes blob2 {
-            0% { transform: translate(0px, 0px) scale(1); }
-            33% { transform: translate(-30px, 50px) scale(1.2); }
-            66% { transform: translate(20px, -20px) scale(0.8); }
-            100% { transform: translate(0px, 0px) scale(1); }
-          }
-          @keyframes blob3 {
-            0% { transform: translate(0px, 0px) scale(1); }
-            50% { transform: translate(50px, 50px) scale(1.1); }
-            100% { transform: translate(0px, 0px) scale(1); }
-          }
-          .animate-blob1 { animation: blob1 15s infinite alternate ease-in-out; }
-          .animate-blob2 { animation: blob2 18s infinite alternate ease-in-out; }
-          .animate-blob3 { animation: blob3 20s infinite alternate ease-in-out; }
-        `}</style>
-        
-        {/* Blob 1 (Amber) */}
-        <div className="absolute top-[-10%] left-[-10%] w-96 h-96 bg-[#FFF3E0] rounded-full mix-blend-multiply filter blur-[100px] opacity-70 animate-blob1" />
-        
-        {/* Blob 2 (Vibrant Orange) */}
-        <div className="absolute top-[20%] right-[-10%] w-[30rem] h-[30rem] bg-[#F57C00] rounded-full mix-blend-multiply filter blur-[120px] opacity-30 animate-blob2" />
-        
-        {/* Blob 3 (Deep Orange) */}
-        <div className="absolute bottom-[-20%] left-[20%] w-[25rem] h-[25rem] bg-[#E65100] rounded-full mix-blend-multiply filter blur-[100px] opacity-20 animate-blob3" />
-      </div>
 
       {/* 🖌️ Airmee-Inspired Minimalist Navigation Bar */}
       <header className="w-full max-w-7xl mx-auto px-6 py-8 flex items-center justify-between z-10 relative">
