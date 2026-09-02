@@ -19,9 +19,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ settings, onNavigateTo
   return (
     <div className="min-h-screen bg-[#FAFAFA] text-slate-900 font-sans flex flex-col selection:bg-orange-600 selection:text-white relative overflow-hidden">
       
-      {/* 🎨 CSS-Only Animations: Staggered Y-Axis Text Reveal & Ambient Fluid Mesh Gradient */}
+      {/* 🎨 1. Staggered Y-Axis Text Reveal Animation */}
       <style>{`
-        /* 1. Hero Staggered Y-Axis Text Reveal Keyframes */
         @keyframes staggerYReveal {
           0% {
             opacity: 0;
@@ -57,85 +56,41 @@ export const LandingPage: React.FC<LandingPageProps> = ({ settings, onNavigateTo
           animation: staggerYReveal 0.9s cubic-bezier(0.16, 1, 0.3, 1) 0.7s forwards;
           opacity: 0;
         }
-
-        /* 2. Fluid Mesh Gradient (Lava Lamp Blob Movement) Keyframes */
-        @keyframes fluidBlob1 {
-          0% {
-            transform: translate(0px, 0px) scale(1);
-          }
-          33% {
-            transform: translate(140px, 90px) scale(1.15);
-          }
-          66% {
-            transform: translate(-80px, 160px) scale(0.9);
-          }
-          100% {
-            transform: translate(100px, -50px) scale(1.05);
-          }
-        }
-
-        @keyframes fluidBlob2 {
-          0% {
-            transform: translate(0px, 0px) scale(1);
-          }
-          33% {
-            transform: translate(-160px, -110px) scale(0.85);
-          }
-          66% {
-            transform: translate(90px, -130px) scale(1.2);
-          }
-          100% {
-            transform: translate(-110px, 70px) scale(0.95);
-          }
-        }
-
-        @keyframes fluidBlob3 {
-          0% {
-            transform: translate(0px, 0px) scale(1);
-          }
-          33% {
-            transform: translate(100px, -120px) scale(1.1);
-          }
-          66% {
-            transform: translate(-120px, 80px) scale(0.92);
-          }
-          100% {
-            transform: translate(70px, 130px) scale(1.08);
-          }
-        }
-
-        .animate-fluid-blob-1 {
-          animation: fluidBlob1 18s ease-in-out infinite alternate;
-        }
-
-        .animate-fluid-blob-2 {
-          animation: fluidBlob2 22s ease-in-out infinite alternate;
-        }
-
-        .animate-fluid-blob-3 {
-          animation: fluidBlob3 20s ease-in-out infinite alternate;
-        }
       `}</style>
 
-      {/* 🌊 Ambient Fluid Mesh Gradient Container (Lava Lamp Effect) */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden z-0" aria-hidden="true">
-        {/* Blob 1: Soft Amber / Cream Base */}
-        <div 
-          className="absolute -top-24 -left-20 w-[550px] h-[550px] rounded-full opacity-30 blur-[120px] animate-fluid-blob-1"
-          style={{ backgroundColor: '#FFF3E0' }}
-        />
+      {/* 🌊 2. Scoped Fluid Mesh Gradient / Lava Lamp Background Container */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none z-[-1] bg-[#FAFAFA]">
+        <style>{`
+          @keyframes blob1 {
+            0% { transform: translate(0px, 0px) scale(1); }
+            33% { transform: translate(30px, -50px) scale(1.1); }
+            66% { transform: translate(-20px, 20px) scale(0.9); }
+            100% { transform: translate(0px, 0px) scale(1); }
+          }
+          @keyframes blob2 {
+            0% { transform: translate(0px, 0px) scale(1); }
+            33% { transform: translate(-30px, 50px) scale(1.2); }
+            66% { transform: translate(20px, -20px) scale(0.8); }
+            100% { transform: translate(0px, 0px) scale(1); }
+          }
+          @keyframes blob3 {
+            0% { transform: translate(0px, 0px) scale(1); }
+            50% { transform: translate(50px, 50px) scale(1.1); }
+            100% { transform: translate(0px, 0px) scale(1); }
+          }
+          .animate-blob1 { animation: blob1 15s infinite alternate ease-in-out; }
+          .animate-blob2 { animation: blob2 18s infinite alternate ease-in-out; }
+          .animate-blob3 { animation: blob3 20s infinite alternate ease-in-out; }
+        `}</style>
         
-        {/* Blob 2: Vibrant Secondary Orange */}
-        <div 
-          className="absolute top-1/4 -right-28 w-[600px] h-[600px] rounded-full opacity-25 blur-[140px] animate-fluid-blob-2"
-          style={{ backgroundColor: '#F57C00' }}
-        />
-
-        {/* Blob 3: Deep Brand Orange Accent */}
-        <div 
-          className="absolute -bottom-32 left-1/3 w-[500px] h-[500px] rounded-full opacity-20 blur-[130px] animate-fluid-blob-3"
-          style={{ backgroundColor: '#E65100' }}
-        />
+        {/* Blob 1 (Amber) */}
+        <div className="absolute top-[-10%] left-[-10%] w-96 h-96 bg-[#FFF3E0] rounded-full mix-blend-multiply filter blur-[100px] opacity-70 animate-blob1" />
+        
+        {/* Blob 2 (Vibrant Orange) */}
+        <div className="absolute top-[20%] right-[-10%] w-[30rem] h-[30rem] bg-[#F57C00] rounded-full mix-blend-multiply filter blur-[120px] opacity-30 animate-blob2" />
+        
+        {/* Blob 3 (Deep Orange) */}
+        <div className="absolute bottom-[-20%] left-[20%] w-[25rem] h-[25rem] bg-[#E65100] rounded-full mix-blend-multiply filter blur-[100px] opacity-20 animate-blob3" />
       </div>
 
       {/* 🖌️ Airmee-Inspired Minimalist Navigation Bar */}
