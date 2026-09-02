@@ -12,6 +12,7 @@ import {
   DebtPaymentRecord
 } from './types';
 import { Header } from './components/Header';
+import { LandingPage } from './components/LandingPage';
 import { LoginLandingPage } from './components/LoginLandingPage';
 import { POSModule } from './components/POSModule';
 import { CheckoutModal } from './components/CheckoutModal';
@@ -28,6 +29,7 @@ import { Lock, ShieldAlert, LogOut } from 'lucide-react';
 export default function App() {
   // --- APPLICATION STATE ---
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
+  const [currentView, setCurrentView] = useState<'landing' | 'login' | 'dashboard'>('landing');
   const [activeTab, setActiveTab] = useState<string>('pos');
   const [isOnline, setIsOnline] = useState<boolean>(true);
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
@@ -499,13 +501,25 @@ export default function App() {
     return !hasParentOwner || currentUser.invitationStatus === 'PENDING';
   }, [currentUser]);
 
-  // Render Login Landing Page if not logged in
+  // Render Landing Page or Login Gateway if not logged in
   if (!isLoggedIn || !currentUser) {
+    if (currentView === 'landing') {
+      return (
+        <LandingPage
+          settings={settings}
+          onNavigateToLogin={() => setCurrentView('login')}
+        />
+      );
+    }
+
     return (
       <LoginLandingPage
         settings={settings}
         staffAccounts={staffAccounts}
-        onLoginSuccess={handleLoginSuccess}
+        onLoginSuccess={(user) => {
+          handleLoginSuccess(user);
+          setCurrentView('dashboard');
+        }}
         onUpdateStaffAccounts={(accounts) => setStaffAccounts(accounts)}
       />
     );
