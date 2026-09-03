@@ -48,7 +48,6 @@ export const LoginLandingPage: React.FC<LoginLandingPageProps> = ({
   const [isForgotModalOpen, setIsForgotModalOpen] = useState<boolean>(false);
   const [forgotStep, setForgotStep] = useState<1 | 2 | 3>(1); // 1: Email input, 2: Code verification, 3: New password
   const [resetEmail, setResetEmail] = useState<string>('');
-  const [generatedCode, setGeneratedCode] = useState<string>('');
   const [enteredCode, setEnteredCode] = useState<string>('');
   const [newPassword, setNewPassword] = useState<string>('');
   const [confirmNewPassword, setConfirmNewPassword] = useState<string>('');
@@ -392,22 +391,19 @@ export const LoginLandingPage: React.FC<LoginLandingPageProps> = ({
       const data = await res.json();
 
       if (!res.ok) {
-        setForgotError(data.error || 'No user found with this email.');
+        setForgotError(data.error || 'Failed to process request.');
         setIsForgotLoading(false);
         return;
       }
 
+      setEnteredCode('');
       setForgotStep(2);
-      if (data.code) {
-        setGeneratedCode(data.code);
-      }
-      setForgotSuccess(data.message || `Verification code sent to ${query}!`);
+      setForgotSuccess(data.message || 'If this email exists, a verification code has been sent.');
     } catch (err: any) {
-      console.warn('Network issue sending reset code, using local OTP fallback:', err.message);
-      const code = Math.floor(100000 + Math.random() * 900000).toString();
-      setGeneratedCode(code);
+      console.warn('Network issue sending reset code:', err.message);
+      setEnteredCode('');
       setForgotStep(2);
-      setForgotSuccess(`Verification code generated for ${query}! OTP: ${code}`);
+      setForgotSuccess('If this email exists, a verification code has been sent.');
     } finally {
       setIsForgotLoading(false);
     }
@@ -681,6 +677,8 @@ export const LoginLandingPage: React.FC<LoginLandingPageProps> = ({
                       onClick={() => {
                         setIsForgotModalOpen(true);
                         setForgotStep(1);
+                        setEnteredCode('');
+                        setNewPassword('');
                         setForgotError('');
                         setForgotSuccess('');
                         if (identifier) setResetEmail(identifier);
@@ -877,12 +875,9 @@ export const LoginLandingPage: React.FC<LoginLandingPageProps> = ({
             {forgotStep === 2 && (
               <form onSubmit={handleResetPasswordSubmit} className="space-y-4">
                 
-                {forgotSuccess && (
-                  <div className="p-3 bg-orange-50 border border-orange-200/80 rounded-2xl text-xs font-semibold text-orange-900 flex items-center gap-2">
-                    <Mail className="w-4 h-4 text-orange-600 shrink-0" />
-                    <span>{forgotSuccess}</span>
-                  </div>
-                )}
+                <p className="text-xs text-slate-600 leading-relaxed font-medium">
+                  Please check your inbox. Enter the 6-digit verification code sent to your email.
+                </p>
 
                 {/* 1. 6-Digit OTP Code Input */}
                 <div>

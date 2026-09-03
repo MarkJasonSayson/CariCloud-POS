@@ -22,21 +22,12 @@ initResetColumns();
 
 // Transporter helper for nodemailer
 const createMailTransporter = () => {
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-
-  if (user && pass) {
-    return nodemailer.createTransport({
-      host: process.env.SMTP_HOST || 'smtp.gmail.com',
-      port: Number(process.env.SMTP_PORT) || 587,
-      secure: false,
-      auth: { user, pass }
-    });
-  }
-
-  // Transporter fallback when SMTP env vars are unconfigured
   return nodemailer.createTransport({
-    jsonTransport: true
+    service: 'gmail',
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS
+    }
   });
 };
 
@@ -390,53 +381,50 @@ async function startServer() {
         console.warn('DB query error on forgot-password:', dbErr.message);
       }
 
-      if (!foundUser) {
-        return res.status(404).json({ error: 'No user found with this email' });
+      if (foundUser) {
+        // Generate random 6-digit numeric OTP code and 15 minute expiration
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+        // Save OTP to database
+        try {
+          await db.execute(
+            `UPDATE user SET reset_code = ?, reset_expires = ? WHERE user_id = ?`,
+            [otp, expiresAt, foundUser.user_id]
+          );
+        } catch (dbUpdateErr: any) {
+          console.warn('DB update error on reset_code:', dbUpdateErr.message);
+        }
+
+        // Configure nodemailer transport with process.env.SMTP_USER and process.env.SMTP_PASS
+        try {
+          const transporter = createMailTransporter();
+          const mailOptions = {
+            from: process.env.SMTP_USER || '"CariCloud Support" <no-reply@caricloud.ph>',
+            to: targetEmail,
+            subject: 'CariCloud POS — 6-Digit Password Reset Verification Code',
+            text: `Your 6-digit verification code is: ${otp}. This code expires in 15 minutes.`,
+            html: `
+              <div style="font-family: sans-serif; padding: 24px; background-color: #FAFAFA; color: #111827; max-width: 500px; margin: 0 auto; border: 1px solid #E5E7EB; border-radius: 12px;">
+                <h2 style="color: #E65100; font-size: 20px; margin-bottom: 12px;">CariCloud POS Password Recovery</h2>
+                <p style="font-size: 14px; color: #374151; margin-bottom: 20px;">Use the following 6-digit verification code to reset your account password:</p>
+                <div style="background-color: #FFF3E0; border: 1px dashed #F57C00; padding: 18px; border-radius: 10px; font-size: 32px; font-weight: 800; letter-spacing: 6px; text-align: center; color: #E65100; margin: 20px 0;">
+                  ${otp}
+                </div>
+                <p style="font-size: 12px; color: #6B7280;">This code will expire in <strong>15 minutes</strong>. If you did not request this, please ignore this email.</p>
+              </div>
+            `
+          };
+
+          await transporter.sendMail(mailOptions);
+        } catch (mailErr: any) {
+          console.error('Nodemailer dispatch error:', mailErr);
+        }
       }
 
-      // Generate random 6-digit numeric OTP code and 15 minute expiration
-      const otp = Math.floor(100000 + Math.random() * 900000).toString();
-      const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
-
-      // Save OTP to database
-      try {
-        await db.execute(
-          `UPDATE user SET reset_code = ?, reset_expires = ? WHERE user_id = ?`,
-          [otp, expiresAt, foundUser.user_id]
-        );
-      } catch (dbUpdateErr: any) {
-        console.warn('DB update error on reset_code:', dbUpdateErr.message);
-      }
-
-      // Configure nodemailer transport with process.env.SMTP_USER and process.env.SMTP_PASS
-      const transporter = createMailTransporter();
-      const mailOptions = {
-        from: process.env.SMTP_FROM || '"CariCloud Support" <no-reply@caricloud.ph>',
-        to: targetEmail,
-        subject: 'CariCloud POS — 6-Digit Password Reset Verification Code',
-        text: `Your 6-digit verification code is: ${otp}. This code expires in 15 minutes.`,
-        html: `
-          <div style="font-family: sans-serif; padding: 24px; background-color: #FAFAFA; color: #111827; max-width: 500px; margin: 0 auto; border: 1px solid #E5E7EB; border-radius: 12px;">
-            <h2 style="color: #E65100; font-size: 20px; margin-bottom: 12px;">CariCloud POS Password Recovery</h2>
-            <p style="font-size: 14px; color: #374151; margin-bottom: 20px;">Use the following 6-digit verification code to reset your account password:</p>
-            <div style="background-color: #FFF3E0; border: 1px dashed #F57C00; padding: 18px; border-radius: 10px; font-size: 32px; font-weight: 800; letter-spacing: 6px; text-align: center; color: #E65100; margin: 20px 0;">
-              ${otp}
-            </div>
-            <p style="font-size: 12px; color: #6B7280;">This code will expire in <strong>15 minutes</strong>. If you did not request this, please ignore this email.</p>
-          </div>
-        `
-      };
-
-      try {
-        await transporter.sendMail(mailOptions);
-      } catch (mailErr: any) {
-        console.warn('Mailer notification:', mailErr.message);
-      }
-
+      // CRITICAL: Return ONLY generic success message without leaking user existence or OTP
       return res.status(200).json({
-        success: true,
-        message: `Verification code sent to ${targetEmail}`,
-        code: otp
+        message: "If this email exists, a verification code has been sent."
       });
 
     } catch (error: any) {
