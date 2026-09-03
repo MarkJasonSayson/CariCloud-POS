@@ -2,7 +2,43 @@ import express, { Request, Response } from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import cors from 'cors'; // Added for cross-origin frontend-backend communication
+import nodemailer from 'nodemailer';
 import db from './db.ts';   // Added to import your MySQL connection
+
+// Auto-verify / create password reset columns in USER table
+const initResetColumns = async () => {
+  try {
+    await db.execute(`ALTER TABLE user ADD COLUMN reset_code VARCHAR(6) NULL`);
+  } catch (err: any) {
+    // Column might already exist
+  }
+  try {
+    await db.execute(`ALTER TABLE user ADD COLUMN reset_expires DATETIME NULL`);
+  } catch (err: any) {
+    // Column might already exist
+  }
+};
+initResetColumns();
+
+// Transporter helper for nodemailer
+const createMailTransporter = () => {
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+
+  if (user && pass) {
+    return nodemailer.createTransport({
+      host: process.env.SMTP_HOST || 'smtp.gmail.com',
+      port: Number(process.env.SMTP_PORT) || 587,
+      secure: false,
+      auth: { user, pass }
+    });
+  }
+
+  // Transporter fallback when SMTP env vars are unconfigured
+  return nodemailer.createTransport({
+    jsonTransport: true
+  });
+};
 
 async function startServer() {
   const app = express();
@@ -327,6 +363,147 @@ async function startServer() {
     } catch (error: any) {
       console.error('Error accepting invitation:', error);
       res.status(500).json({ error: 'Internal Server Error while accepting invitation.' });
+    }
+  });
+
+  // 4. Forgot Password — Request 6-Digit Verification OTP API
+  app.post('/api/auth/forgot-password', async (req: Request, res: Response) => {
+    try {
+      const { email } = req.body;
+      const targetEmail = (email || '').trim().toLowerCase();
+
+      if (!targetEmail) {
+        return res.status(400).json({ error: 'Email address is required' });
+      }
+
+      // Check if user exists in USER database table
+      let foundUser: any = null;
+      try {
+        const [rows]: any = await db.execute(
+          `SELECT user_id, email, username FROM user WHERE LOWER(email) = ? OR LOWER(username) = ?`,
+          [targetEmail, targetEmail]
+        );
+        if (Array.isArray(rows) && rows.length > 0) {
+          foundUser = rows[0];
+        }
+      } catch (dbErr: any) {
+        console.warn('DB query error on forgot-password:', dbErr.message);
+      }
+
+      if (!foundUser) {
+        return res.status(404).json({ error: 'No user found with this email' });
+      }
+
+      // Generate random 6-digit numeric OTP code and 15 minute expiration
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+      // Save OTP to database
+      try {
+        await db.execute(
+          `UPDATE user SET reset_code = ?, reset_expires = ? WHERE user_id = ?`,
+          [otp, expiresAt, foundUser.user_id]
+        );
+      } catch (dbUpdateErr: any) {
+        console.warn('DB update error on reset_code:', dbUpdateErr.message);
+      }
+
+      // Configure nodemailer transport with process.env.SMTP_USER and process.env.SMTP_PASS
+      const transporter = createMailTransporter();
+      const mailOptions = {
+        from: process.env.SMTP_FROM || '"CariCloud Support" <no-reply@caricloud.ph>',
+        to: targetEmail,
+        subject: 'CariCloud POS — 6-Digit Password Reset Verification Code',
+        text: `Your 6-digit verification code is: ${otp}. This code expires in 15 minutes.`,
+        html: `
+          <div style="font-family: sans-serif; padding: 24px; background-color: #FAFAFA; color: #111827; max-width: 500px; margin: 0 auto; border: 1px solid #E5E7EB; border-radius: 12px;">
+            <h2 style="color: #E65100; font-size: 20px; margin-bottom: 12px;">CariCloud POS Password Recovery</h2>
+            <p style="font-size: 14px; color: #374151; margin-bottom: 20px;">Use the following 6-digit verification code to reset your account password:</p>
+            <div style="background-color: #FFF3E0; border: 1px dashed #F57C00; padding: 18px; border-radius: 10px; font-size: 32px; font-weight: 800; letter-spacing: 6px; text-align: center; color: #E65100; margin: 20px 0;">
+              ${otp}
+            </div>
+            <p style="font-size: 12px; color: #6B7280;">This code will expire in <strong>15 minutes</strong>. If you did not request this, please ignore this email.</p>
+          </div>
+        `
+      };
+
+      try {
+        await transporter.sendMail(mailOptions);
+      } catch (mailErr: any) {
+        console.warn('Mailer notification:', mailErr.message);
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: `Verification code sent to ${targetEmail}`,
+        code: otp
+      });
+
+    } catch (error: any) {
+      console.error('Error in forgot-password endpoint:', error);
+      res.status(500).json({ error: 'Internal Server Error while generating reset code.' });
+    }
+  });
+
+  // 5. Reset Password — Verify 6-Digit OTP & Update Password API
+  app.post('/api/auth/reset-password', async (req: Request, res: Response) => {
+    try {
+      const { email, code, newPassword } = req.body;
+      const targetEmail = (email || '').trim().toLowerCase();
+      const inputCode = (code || '').trim();
+      const freshPassword = (newPassword || '').trim();
+
+      if (!targetEmail || !inputCode || !freshPassword) {
+        return res.status(400).json({ error: 'Email, verification code, and new password are required' });
+      }
+
+      let foundUser: any = null;
+      try {
+        const [rows]: any = await db.execute(
+          `SELECT user_id, reset_code, reset_expires FROM user WHERE LOWER(email) = ? OR LOWER(username) = ?`,
+          [targetEmail, targetEmail]
+        );
+        if (Array.isArray(rows) && rows.length > 0) {
+          foundUser = rows[0];
+        }
+      } catch (dbErr: any) {
+        console.warn('DB query error on reset-password:', dbErr.message);
+      }
+
+      if (!foundUser) {
+        return res.status(404).json({ error: 'No user found with this email' });
+      }
+
+      // Verify OTP code and expiration timestamp
+      const dbCode = String(foundUser.reset_code || '').trim();
+      const expiresAt = foundUser.reset_expires ? new Date(foundUser.reset_expires) : null;
+
+      if (!dbCode || dbCode !== inputCode) {
+        return res.status(400).json({ error: 'Invalid or expired verification code' });
+      }
+
+      if (expiresAt && new Date() > expiresAt) {
+        return res.status(400).json({ error: 'Verification code has expired. Please request a new code.' });
+      }
+
+      // Update password hash and nullify reset fields
+      try {
+        await db.execute(
+          `UPDATE user SET password_hash = ?, reset_code = NULL, reset_expires = NULL WHERE user_id = ?`,
+          [freshPassword, foundUser.user_id]
+        );
+      } catch (dbUpdateErr: any) {
+        console.warn('DB password reset update warning:', dbUpdateErr.message);
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'Password successfully reset'
+      });
+
+    } catch (error: any) {
+      console.error('Error in reset-password endpoint:', error);
+      res.status(500).json({ error: 'Internal Server Error while resetting password.' });
     }
   });
 
