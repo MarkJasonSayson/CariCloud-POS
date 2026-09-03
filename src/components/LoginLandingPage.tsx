@@ -48,7 +48,7 @@ export const LoginLandingPage: React.FC<LoginLandingPageProps> = ({
   const [isForgotModalOpen, setIsForgotModalOpen] = useState<boolean>(false);
   const [forgotStep, setForgotStep] = useState<1 | 2 | 3>(1); // 1: Email input, 2: Code verification, 3: New password
   const [resetEmail, setResetEmail] = useState<string>('');
-  const [enteredCode, setEnteredCode] = useState<string>('');
+  const [otp, setOtp] = useState<string>('');
   const [newPassword, setNewPassword] = useState<string>('');
   const [confirmNewPassword, setConfirmNewPassword] = useState<string>('');
   const [forgotError, setForgotError] = useState<string>('');
@@ -391,19 +391,17 @@ export const LoginLandingPage: React.FC<LoginLandingPageProps> = ({
       const data = await res.json();
 
       if (!res.ok) {
-        setForgotError(data.error || 'Failed to process request.');
+        setForgotError(data.error || 'Failed to dispatch verification email.');
         setIsForgotLoading(false);
         return;
       }
 
-      setEnteredCode('');
+      setOtp('');
       setForgotStep(2);
       setForgotSuccess(data.message || 'If this email exists, a verification code has been sent.');
     } catch (err: any) {
-      console.warn('Network issue sending reset code:', err.message);
-      setEnteredCode('');
-      setForgotStep(2);
-      setForgotSuccess('If this email exists, a verification code has been sent.');
+      console.error('Nodemailer / Network Error:', err);
+      setForgotError('Failed to send verification email. Please check server mail configuration or try again.');
     } finally {
       setIsForgotLoading(false);
     }
@@ -413,9 +411,9 @@ export const LoginLandingPage: React.FC<LoginLandingPageProps> = ({
     e.preventDefault();
     setForgotError('');
 
-    const inputCode = enteredCode.trim();
+    const inputCode = otp.trim();
     if (!inputCode || inputCode.length !== 6) {
-      setForgotError('Please enter the 6-digit verification OTP code.');
+      setForgotError('Please enter the 6-digit verification code.');
       return;
     }
 
@@ -460,17 +458,14 @@ export const LoginLandingPage: React.FC<LoginLandingPageProps> = ({
       setIdentifier(resetEmail.trim());
       setPassword(newPassword);
 
-      alert(`Password successfully reset! You can now log in with your new password.`);
+      alert('Password reset successful! You can now log in with your new password.');
       setIsForgotModalOpen(false);
       setForgotStep(1);
-      setEnteredCode('');
+      setOtp('');
       setNewPassword('');
     } catch (err: any) {
-      console.warn('Network issue resetting password, performing local update fallback:', err.message);
-      setIdentifier(resetEmail.trim());
-      setPassword(newPassword);
-      setIsForgotModalOpen(false);
-      alert('Password successfully reset! You can now log in.');
+      console.error('Error resetting password:', err);
+      setForgotError('Failed to reset password. Please check your connection and try again.');
     } finally {
       setIsForgotLoading(false);
     }
@@ -677,7 +672,7 @@ export const LoginLandingPage: React.FC<LoginLandingPageProps> = ({
                       onClick={() => {
                         setIsForgotModalOpen(true);
                         setForgotStep(1);
-                        setEnteredCode('');
+                        setOtp('');
                         setNewPassword('');
                         setForgotError('');
                         setForgotSuccess('');
@@ -888,9 +883,8 @@ export const LoginLandingPage: React.FC<LoginLandingPageProps> = ({
                     type="text"
                     maxLength={6}
                     required
-                    placeholder="123456"
-                    value={enteredCode}
-                    onChange={(e) => setEnteredCode(e.target.value)}
+                    value={otp}
+                    onChange={(e) => setOtp(e.target.value)}
                     className="w-full font-mono text-center tracking-[8px] text-2xl font-black px-4 py-3 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none bg-slate-50/50"
                   />
                 </div>
@@ -930,7 +924,10 @@ export const LoginLandingPage: React.FC<LoginLandingPageProps> = ({
                 <div className="flex items-center justify-between pt-2">
                   <button
                     type="button"
-                    onClick={() => setForgotStep(1)}
+                    onClick={() => {
+                      setForgotStep(1);
+                      setOtp('');
+                    }}
                     className="text-xs font-bold text-slate-500 flex items-center gap-1 cursor-pointer hover:text-slate-800"
                   >
                     <ArrowLeft className="w-3.5 h-3.5" />

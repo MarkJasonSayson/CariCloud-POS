@@ -387,42 +387,39 @@ async function startServer() {
         const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
         // Save OTP to database
-        try {
-          await db.execute(
-            `UPDATE user SET reset_code = ?, reset_expires = ? WHERE user_id = ?`,
-            [otp, expiresAt, foundUser.user_id]
-          );
-        } catch (dbUpdateErr: any) {
-          console.warn('DB update error on reset_code:', dbUpdateErr.message);
-        }
+        await db.execute(
+          `UPDATE user SET reset_code = ?, reset_expires = ? WHERE user_id = ?`,
+          [otp, expiresAt, foundUser.user_id]
+        );
 
         // Configure nodemailer transport with process.env.SMTP_USER and process.env.SMTP_PASS
-        try {
-          const transporter = createMailTransporter();
-          const mailOptions = {
-            from: process.env.SMTP_USER || '"CariCloud Support" <no-reply@caricloud.ph>',
-            to: targetEmail,
-            subject: 'CariCloud POS — 6-Digit Password Reset Verification Code',
-            text: `Your 6-digit verification code is: ${otp}. This code expires in 15 minutes.`,
-            html: `
-              <div style="font-family: sans-serif; padding: 24px; background-color: #FAFAFA; color: #111827; max-width: 500px; margin: 0 auto; border: 1px solid #E5E7EB; border-radius: 12px;">
-                <h2 style="color: #E65100; font-size: 20px; margin-bottom: 12px;">CariCloud POS Password Recovery</h2>
-                <p style="font-size: 14px; color: #374151; margin-bottom: 20px;">Use the following 6-digit verification code to reset your account password:</p>
-                <div style="background-color: #FFF3E0; border: 1px dashed #F57C00; padding: 18px; border-radius: 10px; font-size: 32px; font-weight: 800; letter-spacing: 6px; text-align: center; color: #E65100; margin: 20px 0;">
-                  ${otp}
-                </div>
-                <p style="font-size: 12px; color: #6B7280;">This code will expire in <strong>15 minutes</strong>. If you did not request this, please ignore this email.</p>
+        const transporter = createMailTransporter();
+        const mailOptions = {
+          from: process.env.SMTP_USER || '"CariCloud Support" <no-reply@caricloud.ph>',
+          to: targetEmail,
+          subject: 'CariCloud POS — 6-Digit Password Reset Verification Code',
+          text: `Your 6-digit verification code is: ${otp}. This code expires in 15 minutes.`,
+          html: `
+            <div style="font-family: sans-serif; padding: 24px; background-color: #FAFAFA; color: #111827; max-width: 500px; margin: 0 auto; border: 1px solid #E5E7EB; border-radius: 12px;">
+              <h2 style="color: #E65100; font-size: 20px; margin-bottom: 12px;">CariCloud POS Password Recovery</h2>
+              <p style="font-size: 14px; color: #374151; margin-bottom: 20px;">Use the following 6-digit verification code to reset your account password:</p>
+              <div style="background-color: #FFF3E0; border: 1px dashed #F57C00; padding: 18px; border-radius: 10px; font-size: 32px; font-weight: 800; letter-spacing: 6px; text-align: center; color: #E65100; margin: 20px 0;">
+                ${otp}
               </div>
-            `
-          };
+              <p style="font-size: 12px; color: #6B7280;">This code will expire in <strong>15 minutes</strong>. If you did not request this, please ignore this email.</p>
+            </div>
+          `
+        };
 
+        try {
           await transporter.sendMail(mailOptions);
-        } catch (mailErr: any) {
-          console.error('Nodemailer dispatch error:', mailErr);
+        } catch (error: any) {
+          console.error("Nodemailer Error:", error);
+          return res.status(500).json({ error: "Failed to send verification email. Please check server mail configuration." });
         }
       }
 
-      // CRITICAL: Return ONLY generic success message without leaking user existence or OTP
+      // Return generic success message without leaking user existence or OTP
       return res.status(200).json({
         message: "If this email exists, a verification code has been sent."
       });
@@ -445,44 +442,24 @@ async function startServer() {
         return res.status(400).json({ error: 'Email, verification code, and new password are required' });
       }
 
-      let foundUser: any = null;
-      try {
-        const [rows]: any = await db.execute(
-          `SELECT user_id, reset_code, reset_expires FROM user WHERE LOWER(email) = ? OR LOWER(username) = ?`,
-          [targetEmail, targetEmail]
-        );
-        if (Array.isArray(rows) && rows.length > 0) {
-          foundUser = rows[0];
-        }
-      } catch (dbErr: any) {
-        console.warn('DB query error on reset-password:', dbErr.message);
+      // CRITICAL: Query database to verify OTP before hashing or updating new password
+      const [rows]: any = await db.execute(
+        `SELECT * FROM user WHERE (LOWER(email) = ? OR LOWER(username) = ?) AND reset_code = ? AND reset_expires > NOW()`,
+        [targetEmail, targetEmail, inputCode]
+      );
+
+      // If query returns 0 rows (wrong, missing, or expired OTP), abort immediately with 400
+      if (!Array.isArray(rows) || rows.length === 0) {
+        return res.status(400).json({ error: "Invalid or expired verification code." });
       }
 
-      if (!foundUser) {
-        return res.status(404).json({ error: 'No user found with this email' });
-      }
+      const validUser = rows[0];
 
-      // Verify OTP code and expiration timestamp
-      const dbCode = String(foundUser.reset_code || '').trim();
-      const expiresAt = foundUser.reset_expires ? new Date(foundUser.reset_expires) : null;
-
-      if (!dbCode || dbCode !== inputCode) {
-        return res.status(400).json({ error: 'Invalid or expired verification code' });
-      }
-
-      if (expiresAt && new Date() > expiresAt) {
-        return res.status(400).json({ error: 'Verification code has expired. Please request a new code.' });
-      }
-
-      // Update password hash and nullify reset fields
-      try {
-        await db.execute(
-          `UPDATE user SET password_hash = ?, reset_code = NULL, reset_expires = NULL WHERE user_id = ?`,
-          [freshPassword, foundUser.user_id]
-        );
-      } catch (dbUpdateErr: any) {
-        console.warn('DB password reset update warning:', dbUpdateErr.message);
-      }
+      // Proceed to update password and set reset_code and reset_expires to NULL
+      await db.execute(
+        `UPDATE user SET password_hash = ?, reset_code = NULL, reset_expires = NULL WHERE user_id = ?`,
+        [freshPassword, validUser.user_id]
+      );
 
       return res.status(200).json({
         success: true,
