@@ -1,13 +1,4 @@
 import React from 'react';
-import { 
-  ArrowRight, 
-  ShieldCheck, 
-  Zap, 
-  BookOpen, 
-  Store, 
-  Lock,
-  ChevronRight
-} from 'lucide-react';
 import { StoreSettings } from '../types';
 
 interface LandingPageProps {
@@ -16,207 +7,217 @@ interface LandingPageProps {
 }
 
 export const LandingPage: React.FC<LandingPageProps> = ({ settings, onNavigateToLogin }) => {
+  const triggerGateway = (e: React.MouseEvent) => {
+    e.preventDefault();
+    onNavigateToLogin();
+  };
+
   return (
-    <div className="relative min-h-screen bg-[#FAFAFA] overflow-hidden text-slate-900 font-sans flex flex-col selection:bg-orange-600 selection:text-white">
+    <div className="relative min-h-screen bg-[#FAFAFA] text-[#111827] font-sans overflow-x-hidden selection:bg-[#E65100] selection:text-white">
       
-      {/* 🌊 Fluid Mesh Gradient Background Layer */}
-      <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
+      {/* 🌊 Ambient Colliding Mesh Background (5 Blobs with calc viewport bouncing) */}
+      <div className="fixed top-0 left-0 w-[100vw] h-[100vh] overflow-hidden z-0 pointer-events-none bg-[#FAFAFA]" aria-hidden="true">
         <style>{`
-          @keyframes float1 {
-            0% { transform: translate(0px, 0px) scale(1); }
-            33% { transform: translate(30px, -50px) scale(1.1); }
-            66% { transform: translate(-20px, 20px) scale(0.9); }
-            100% { transform: translate(0px, 0px) scale(1); }
+          .blob {
+            position: absolute;
+            border-radius: 50%;
+            opacity: 0.55;
+            filter: blur(100px);
+            will-change: transform;
           }
-          @keyframes float2 {
-            0% { transform: translate(0px, 0px) scale(1); }
-            33% { transform: translate(-30px, 50px) scale(1.2); }
-            66% { transform: translate(20px, -20px) scale(0.8); }
-            100% { transform: translate(0px, 0px) scale(1); }
+
+          /* Blob 1: Top-Left to Bottom-Right */
+          .blob-1 {
+            width: 380px;
+            height: 380px;
+            background: #FFE0B2;
+            top: 0;
+            left: 0;
+            animation: bounce1 24s infinite alternate ease-in-out;
           }
-          @keyframes float3 {
-            0% { transform: translate(0px, 0px) scale(1); }
-            50% { transform: translate(50px, 50px) scale(1.1); }
-            100% { transform: translate(0px, 0px) scale(1); }
+          @keyframes bounce1 {
+            0% { transform: translate(0, 0) scale(1); }
+            100% { transform: translate(calc(100vw - 380px), calc(100vh - 380px)) scale(1.15); }
           }
-          .animate-float1 { animation: float1 15s infinite alternate ease-in-out; }
-          .animate-float2 { animation: float2 18s infinite alternate ease-in-out; }
-          .animate-float3 { animation: float3 20s infinite alternate ease-in-out; }
+
+          /* Blob 2: Bottom-Right to Top-Left */
+          .blob-2 {
+            width: 440px;
+            height: 440px;
+            background: #F57C00;
+            bottom: 0;
+            right: 0;
+            animation: bounce2 28s infinite alternate ease-in-out;
+          }
+          @keyframes bounce2 {
+            0% { transform: translate(0, 0) scale(1.1); }
+            100% { transform: translate(calc(-100vw + 440px), calc(-100vh + 440px)) scale(0.95); }
+          }
+
+          /* Blob 3: Top-Right to Center-Left */
+          .blob-3 {
+            width: 320px;
+            height: 320px;
+            background: #E65100;
+            top: 0;
+            right: 0;
+            animation: bounce3 22s infinite alternate ease-in-out;
+          }
+          @keyframes bounce3 {
+            0% { transform: translate(0, 0); }
+            100% { transform: translate(calc(-70vw + 320px), calc(80vh - 320px)); }
+          }
+
+          /* Blob 4: Bottom-Left to Top-Center */
+          .blob-4 {
+            width: 360px;
+            height: 360px;
+            background: #FFB74D;
+            bottom: 0;
+            left: 0;
+            animation: bounce4 26s infinite alternate ease-in-out;
+          }
+          @keyframes bounce4 {
+            0% { transform: translate(0, 0); }
+            100% { transform: translate(calc(60vw - 360px), calc(-90vh + 360px)); }
+          }
+
+          /* Blob 5: Center Drift & Pulsing */
+          .blob-5 {
+            width: 500px;
+            height: 500px;
+            background: #FFF3E0;
+            top: 50%;
+            left: 50%;
+            margin-top: -250px;
+            margin-left: -250px;
+            animation: bounce5 32s infinite alternate ease-in-out;
+          }
+          @keyframes bounce5 {
+            0% { transform: translate(0, 0) scale(0.85); }
+            50% { transform: translate(calc(20vw), calc(-20vh)) scale(1.1); }
+            100% { transform: translate(calc(-25vw), calc(20vh)) scale(0.95); }
+          }
+
+          /* Staggered Entrance Keyframes */
+          .reveal-item {
+            opacity: 0;
+            transform: translateY(24px);
+            animation: entranceReveal 0.9s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          }
+
+          @keyframes entranceReveal {
+            to {
+              opacity: 1;
+              transform: translateY(0);
+            }
+          }
+
+          .delay-1 { animation-delay: 0.05s; }
+          .delay-2 { animation-delay: 0.15s; }
+          .delay-3 { animation-delay: 0.25s; }
+          .delay-4 { animation-delay: 0.35s; }
+          .delay-5 { animation-delay: 0.45s; }
+          .delay-6 { animation-delay: 0.55s; }
         `}</style>
         
-        {/* Amber Blob */}
-        <div className="absolute top-[-10%] left-[-10%] w-[30rem] h-[30rem] bg-[#FFF3E0] rounded-full mix-blend-multiply filter blur-[100px] opacity-70 animate-float1"></div>
-        
-        {/* Vibrant Orange Blob */}
-        <div className="absolute top-[20%] right-[-10%] w-[35rem] h-[35rem] bg-[#F57C00] rounded-full mix-blend-multiply filter blur-[120px] opacity-30 animate-float2"></div>
-        
-        {/* Deep Orange Blob */}
-        <div className="absolute bottom-[-20%] left-[20%] w-[30rem] h-[30rem] bg-[#E65100] rounded-full mix-blend-multiply filter blur-[100px] opacity-20 animate-float3"></div>
+        <div className="blob blob-1"></div>
+        <div className="blob blob-2"></div>
+        <div className="blob blob-3"></div>
+        <div className="blob blob-4"></div>
+        <div className="blob blob-5"></div>
       </div>
 
-      {/* 🎨 Staggered Y-Axis Text Reveal Animation */}
-      <style>{`
-        @keyframes staggerYReveal {
-          0% {
-            opacity: 0;
-            transform: translateY(20px);
-          }
-          100% {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-
-        .animate-stagger-1 {
-          animation: staggerYReveal 0.9s cubic-bezier(0.16, 1, 0.3, 1) 0.1s forwards;
-          opacity: 0;
-        }
-
-        .animate-stagger-2 {
-          animation: staggerYReveal 0.9s cubic-bezier(0.16, 1, 0.3, 1) 0.25s forwards;
-          opacity: 0;
-        }
-
-        .animate-stagger-3 {
-          animation: staggerYReveal 0.9s cubic-bezier(0.16, 1, 0.3, 1) 0.4s forwards;
-          opacity: 0;
-        }
-
-        .animate-stagger-4 {
-          animation: staggerYReveal 0.9s cubic-bezier(0.16, 1, 0.3, 1) 0.55s forwards;
-          opacity: 0;
-        }
-
-        .animate-stagger-5 {
-          animation: staggerYReveal 0.9s cubic-bezier(0.16, 1, 0.3, 1) 0.7s forwards;
-          opacity: 0;
-        }
-      `}</style>
-
-      {/* 🖌️ Airmee-Inspired Minimalist Navigation Bar */}
-      <header className="w-full max-w-7xl mx-auto px-6 py-8 flex items-center justify-between z-10 relative">
-        <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 rounded-2xl bg-slate-900 text-white flex items-center justify-center font-black text-xl shadow-xs">
-            C
-          </div>
-          <div className="flex flex-col">
-            <span className="font-extrabold text-lg tracking-tight text-slate-900 leading-none">
-              CariCloud<span className="text-orange-600">POS</span>
-            </span>
-            <span className="text-[10px] font-bold text-slate-400 tracking-wider uppercase mt-0.5">
-              Internal Enterprise Edition
-            </span>
-          </div>
-        </div>
-
-        <div className="flex items-center space-x-4">
-          <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 bg-slate-100/90 backdrop-blur-xs text-slate-600 rounded-full text-xs font-semibold border border-slate-200/60">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            Marikina SME Ordinance Compliant
-          </span>
-          <button
-            onClick={onNavigateToLogin}
-            className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-full transition-all duration-200 cursor-pointer flex items-center gap-1.5 shadow-xs"
-          >
-            <span>Internal Gateway</span>
-            <ChevronRight className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      </header>
-
-      {/* 🖼️ Hero Section with Massive Negative Space & Airmee Typography */}
-      <main className="flex-1 flex flex-col justify-center max-w-5xl mx-auto px-6 pt-12 pb-24 z-10 text-center relative">
+      {/* 🖼️ Main Viewport Content Wrapper */}
+      <div className="max-w-[1240px] mx-auto px-6 py-6 sm:px-8 sm:py-8 relative z-10">
         
-        {/* Stagger 1: Operational Badge */}
-        <div className="animate-stagger-1 inline-flex items-center justify-center space-x-2 mx-auto mb-8 bg-orange-50/90 border border-orange-200/80 backdrop-blur-xs px-4 py-1.5 rounded-full">
-          <Zap className="w-3.5 h-3.5 text-orange-600 shrink-0" />
-          <span className="text-xs font-bold text-orange-800 tracking-wide uppercase">
-            Internal Cafeteria Management System
-          </span>
-        </div>
+        {/* Top Navigation */}
+        <header className="flex justify-between items-center mb-14 reveal-item delay-1">
+          <div className="flex items-center gap-3">
+            <div className="w-[38px] h-[38px] bg-[#111827] text-white rounded-full flex items-center justify-center font-bold text-lg">
+              C
+            </div>
+            <div>
+              <div className="text-[18px] tracking-tight text-[#111827] font-normal leading-tight">
+                CariCloud<strong className="text-[#E65100] font-extrabold">POS</strong>
+              </div>
+              <span className="block text-[9px] tracking-[0.8px] text-[#6B7280] font-semibold uppercase">
+                INTERNAL ENTERPRISE EDITION
+              </span>
+            </div>
+          </div>
 
-        {/* Stagger 2: Oversized Hero Headline */}
-        <h1 className="animate-stagger-2 text-4xl sm:text-6xl md:text-7xl font-black text-slate-900 tracking-tight leading-[1.08] mb-8 max-w-4xl mx-auto">
-          Total Control Over Your Carinderia Operations.
-        </h1>
+          <div className="flex items-center gap-4">
+            <span className="hidden md:flex items-center gap-1.5 bg-white/90 backdrop-blur-xs border border-[#E5E7EB] px-3.5 py-1.5 rounded-full text-xs font-medium text-[#374151]">
+              <span className="w-1.5 h-1.5 bg-[#10B981] rounded-full animate-pulse"></span>
+              Marikina SME Ordinance Compliant
+            </span>
+            <button
+              onClick={triggerGateway}
+              className="bg-[#111827] hover:bg-[#1F2937] text-white text-xs font-medium px-4 py-2 rounded-full transition-colors duration-200 cursor-pointer"
+            >
+              Internal Gateway &rsaquo;
+            </button>
+          </div>
+        </header>
 
-        {/* Stagger 3: Internal Operations Focused Copy */}
-        <p className="animate-stagger-3 text-base sm:text-xl text-slate-600 font-medium leading-relaxed max-w-2xl mx-auto mb-10">
-          Replace manual paper notebooks and accelerate peak-hour counter throughput with an internal POS engineered specifically for Marikina’s food micro-enterprises.
-        </p>
-
-        {/* Stagger 4: Primary CTA Button Group (Brand Orange Accent) */}
-        <div className="animate-stagger-4 flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
-          <button
-            onClick={onNavigateToLogin}
-            className="w-full sm:w-auto px-8 py-4 bg-[#E65100] hover:bg-[#FF6D00] text-white font-extrabold text-sm rounded-2xl transition-all duration-300 shadow-lg shadow-orange-600/20 hover:shadow-orange-600/30 flex items-center justify-center space-x-2 cursor-pointer group"
-          >
-            <span>LAUNCH POS GATEWAY</span>
-            <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-          </button>
+        {/* Hero Content */}
+        <main className="text-center flex flex-col items-center">
           
-          <div className="flex items-center space-x-2 text-slate-500 text-xs font-medium">
-            <Lock className="w-3.5 h-3.5 text-slate-400" />
-            <span>Encrypted Multi-Tenant Hierarchy</span>
+          <div className="reveal-item delay-2 inline-flex items-center gap-1.5 bg-[#FFF3E0] border border-[#FFE0B2] text-[#D9480F] text-[11px] font-bold px-4 py-1.5 rounded-full tracking-[0.5px] mb-7">
+            <span>&#9889;</span> INTERNAL CAFETERIA MANAGEMENT SYSTEM
           </div>
-        </div>
 
-        {/* Stagger 5: Clean Feature Cards (Minimalist Airmee Palette) */}
-        <div className="animate-stagger-5 grid grid-cols-1 md:grid-cols-3 gap-6 text-left">
-          
-          <div className="bg-white/90 backdrop-blur-xs border border-slate-200/80 rounded-3xl p-6 shadow-xs hover:border-slate-300 transition-all">
-            <div className="w-10 h-10 rounded-2xl bg-slate-100 text-slate-900 flex items-center justify-center mb-4">
-              <BookOpen className="w-5 h-5" />
+          <h1 className="reveal-item delay-3 text-4xl sm:text-6xl md:text-[64px] leading-[1.08] tracking-[-2px] font-extrabold text-[#0F172A] mb-6 max-w-4xl">
+            Total Control Over Your<br className="hidden sm:inline" /> Carinderia Operations.
+          </h1>
+
+          <p className="reveal-item delay-4 max-w-[680px] text-base sm:text-[17px] leading-[1.6] text-[#4B5563] mb-10">
+            Replace manual paper notebooks and accelerate peak-hour counter throughput with an internal POS engineered specifically for Marikina's food micro-enterprises.
+          </p>
+
+          <div className="reveal-item delay-5 flex items-center gap-5 mb-16">
+            <button
+              onClick={triggerGateway}
+              className="bg-[#E65100] hover:bg-[#D84315] text-white text-sm font-bold px-7 py-3.5 rounded-xl tracking-[0.2px] shadow-[0_4px_14px_rgba(230,81,0,0.35)] transition-all duration-150 cursor-pointer hover:-translate-y-0.5"
+            >
+              LAUNCH POS GATEWAY &rarr;
+            </button>
+            <div className="text-xs text-[#6B7280] flex items-center gap-1.5">
+              <span>&#128274;</span> Encrypted Multi-Tenant Hierarchy
             </div>
-            <h3 className="font-extrabold text-slate-900 text-base mb-1.5">
-              Digital "Listahan" Ledger
-            </h3>
-            <p className="text-xs text-slate-500 leading-relaxed font-medium">
-              Eliminate lost paper notes. Track customer credit limits and cash repayments with full operational audit trails.
-            </p>
           </div>
 
-          <div className="bg-white/90 backdrop-blur-xs border border-slate-200/80 rounded-3xl p-6 shadow-xs hover:border-slate-300 transition-all">
-            <div className="w-10 h-10 rounded-2xl bg-slate-100 text-slate-900 flex items-center justify-center mb-4">
-              <Zap className="w-5 h-5" />
-            </div>
-            <h3 className="font-extrabold text-slate-900 text-base mb-1.5">
-              High-Speed Peak Counter
-            </h3>
-            <p className="text-xs text-slate-500 leading-relaxed font-medium">
-              Process full and half-portion dish orders in seconds with Senior/PWD statutory discount calculations.
-            </p>
-          </div>
+          {/* Feature Teaser Grid */}
+          <section className="reveal-item delay-6 grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-[1080px] text-left">
+            <article className="bg-white/90 backdrop-blur-xs border border-[#F3F4F6] rounded-2xl p-7 shadow-[0_4px_20px_rgba(0,0,0,0.02)]">
+              <div className="text-lg mb-4">&#128214;</div>
+              <h3 className="text-base font-bold text-[#111827] mb-2">Digital "Listahan" Ledger</h3>
+              <p className="text-xs leading-[1.5] text-[#6B7280]">
+                Eliminate lost paper notes. Track customer credit limits and cash repayments with full operational audit trails.
+              </p>
+            </article>
 
-          <div className="bg-white/90 backdrop-blur-xs border border-slate-200/80 rounded-3xl p-6 shadow-xs hover:border-slate-300 transition-all">
-            <div className="w-10 h-10 rounded-2xl bg-slate-100 text-slate-900 flex items-center justify-center mb-4">
-              <ShieldCheck className="w-5 h-5" />
-            </div>
-            <h3 className="font-extrabold text-slate-900 text-base mb-1.5">
-              Marikina BPLO Compliance
-            </h3>
-            <p className="text-xs text-slate-500 leading-relaxed font-medium">
-              Real-time gross annual revenue tracking against statutory tax relief thresholds (₱250,000 exemption cap).
-            </p>
-          </div>
+            <article className="bg-white/90 backdrop-blur-xs border border-[#F3F4F6] rounded-2xl p-7 shadow-[0_4px_20px_rgba(0,0,0,0.02)]">
+              <div className="text-lg mb-4">&#9889;</div>
+              <h3 className="text-base font-bold text-[#111827] mb-2">High-Speed Peak Counter</h3>
+              <p className="text-xs leading-[1.5] text-[#6B7280]">
+                Process full and half-portion dish orders in seconds with Senior/PWD statutory discount calculations.
+              </p>
+            </article>
 
-        </div>
+            <article className="bg-white/90 backdrop-blur-xs border border-[#F3F4F6] rounded-2xl p-7 shadow-[0_4px_20px_rgba(0,0,0,0.02)]">
+              <div className="text-lg mb-4">&#128737;</div>
+              <h3 className="text-base font-bold text-[#111827] mb-2">Marikina BPLO Compliance</h3>
+              <p className="text-xs leading-[1.5] text-[#6B7280]">
+                Real-time gross annual revenue tracking against statutory tax relief thresholds (&#8369;250,000 exemption cap).
+              </p>
+            </article>
+          </section>
 
-      </main>
+        </main>
 
-      {/* 🦶 Minimalist Footer */}
-      <footer className="w-full border-t border-slate-200/60 bg-white/80 backdrop-blur-xs py-8 px-6 mt-auto text-xs text-slate-400 font-medium z-10 relative">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center space-x-2">
-            <Store className="w-4 h-4 text-slate-400" />
-            <span>CariCloud POS Engine • Marikina City SME Ordinance No. 2026-018</span>
-          </div>
-          <div>
-            <span>Internal Enterprise Operations System</span>
-          </div>
-        </div>
-      </footer>
-
+      </div>
     </div>
   );
 };
