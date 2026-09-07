@@ -3,9 +3,9 @@ import 'dotenv/config';
 import express, { Request, Response } from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import cors from 'cors'; // Added for cross-origin frontend-backend communication
+import cors from 'cors';
 import nodemailer from 'nodemailer';
-import db from './db.ts';   // Added to import your MySQL connection
+import db from './db.ts';
 
 // Auto-verify / create password reset columns in USER table
 const initResetColumns = async () => {
@@ -88,8 +88,8 @@ async function startServer() {
 
       try {
         const [rows]: any = await db.execute(
-          `SELECT user_id, parent_owner_id, user_role, username, email FROM user WHERE LOWER(email) = ? OR LOWER(username) = ?`,
-          [identifier, identifier]
+          `SELECT user_id, parent_owner_id, user_role, username FROM user WHERE LOWER(username) = ?`,
+          [identifier]
         );
 
         if (Array.isArray(rows) && rows.length > 0) {
@@ -129,11 +129,10 @@ async function startServer() {
       }
 
       // Non-Existent Account Guard & Cross-Eatery Conflict Detection
-      // Query backend DB USER table for employeeEmail before proceeding.
       try {
         const [existingUsers]: any = await db.execute(
-          `SELECT user_id, parent_owner_id, user_role, email FROM USER WHERE LOWER(email) = ? OR LOWER(username) = ?`,
-          [targetEmail, targetEmail]
+          `SELECT user_id, parent_owner_id, user_role, username FROM user WHERE LOWER(username) = ?`,
+          [targetEmail]
         );
 
         if (!Array.isArray(existingUsers) || existingUsers.length === 0) {
@@ -297,7 +296,7 @@ async function startServer() {
       const targetEmail = invitation.email.toLowerCase();
       try {
         const [existingUsers]: any = await db.execute(
-          `SELECT user_id, parent_owner_id, user_role FROM user WHERE LOWER(email) = ?`,
+          `SELECT user_id, parent_owner_id, user_role FROM user WHERE LOWER(username) = ?`,
           [targetEmail]
         );
 
@@ -322,8 +321,8 @@ async function startServer() {
 
       try {
         const [userRes]: any = await db.execute(
-          `INSERT INTO user (parent_owner_id, username, password_hash, user_role, subscription_tier, email) VALUES (?, ?, ?, 'CASHIER', 'TIER_1', ?)`,
-          [invitation.tenant_id, finalUsername, password, targetEmail]
+          `INSERT INTO user (parent_owner_id, username, password_hash, user_role, subscription_tier) VALUES (?, ?, ?, 'CASHIER', 'TIER_1')`,
+          [invitation.tenant_id, finalUsername, password]
         );
 
         if (userRes?.insertId) {
@@ -373,8 +372,8 @@ async function startServer() {
       let foundUser: any = null;
       try {
         const [rows]: any = await db.execute(
-          `SELECT user_id, email, username FROM user WHERE LOWER(email) = ? OR LOWER(username) = ?`,
-          [targetEmail, targetEmail]
+          `SELECT user_id, username FROM user WHERE LOWER(username) = ?`,
+          [targetEmail]
         );
         if (Array.isArray(rows) && rows.length > 0) {
           foundUser = rows[0];
@@ -446,8 +445,8 @@ async function startServer() {
 
       // CRITICAL: Query database to verify OTP before hashing or updating new password
       const [rows]: any = await db.execute(
-        `SELECT * FROM user WHERE (LOWER(email) = ? OR LOWER(username) = ?) AND reset_code = ? AND reset_expires > NOW()`,
-        [targetEmail, targetEmail, inputCode]
+        `SELECT * FROM user WHERE LOWER(username) = ? AND reset_code = ? AND reset_expires > NOW()`,
+        [targetEmail, inputCode]
       );
 
       // If query returns 0 rows (wrong, missing, or expired OTP), abort immediately with 400
