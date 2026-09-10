@@ -23,12 +23,20 @@ const initResetColumns = async () => {
 initResetColumns();
 
 // Transporter helper for nodemailer
+// Transporter helper for nodemailer
 const createMailTransporter = () => {
   return nodemailer.createTransport({
-    service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 587,
+    secure: false, // Forces STARTTLS rather than strict SSL
+    requireTLS: true,
     auth: {
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASS
+    },
+    tls: {
+      // Prevents local network firewalls from rejecting the connection
+      rejectUnauthorized: false
     }
   });
 };
@@ -358,6 +366,51 @@ async function startServer() {
     }
   });
 
+  // Registration — Create New Store Owner API
+  app.post('/api/auth/register', async (req: Request, res: Response) => {
+    try {
+      // The frontend might send 'email' or 'username' depending on your form setup
+      const { email, password } = req.body;
+      const targetUsername = (email || '').trim().toLowerCase();
+      const rawPassword = (password || '').trim();
+
+      if (!targetUsername || !rawPassword) {
+        return res.status(400).json({ error: 'Email and password are required to register.' });
+      }
+
+      // 1. Check if the account already exists to prevent duplicates
+      const [existingUsers]: any = await db.execute(
+        `SELECT user_id FROM user WHERE LOWER(username) = ?`,
+        [targetUsername]
+      );
+
+      if (Array.isArray(existingUsers) && existingUsers.length > 0) {
+        return res.status(409).json({ error: 'An account with this email already exists. Please log in.' });
+      }
+
+      // 2. Insert the new Store Owner into the database
+      // Defaulting to 'ADMIN' role and 'TIER_1' subscription for new sign-ups
+      const [result]: any = await db.execute(
+        `INSERT INTO user (username, password_hash, user_role, subscription_tier) VALUES (?, ?, 'ADMIN', 'TIER_1')`,
+        [targetUsername, rawPassword]
+      );
+
+      return res.status(201).json({
+        success: true,
+        message: 'Owner account created successfully!',
+        user: {
+          id: result.insertId,
+          username: targetUsername,
+          role: 'ADMIN'
+        }
+      });
+
+    } catch (error: any) {
+      console.error('Error in register endpoint:', error);
+      res.status(500).json({ error: 'Internal Server Error while creating account.' });
+    }
+  });
+
   // 4. Forgot Password — Request 6-Digit Verification OTP API
   app.post('/api/auth/forgot-password', async (req: Request, res: Response) => {
     try {
@@ -383,6 +436,8 @@ async function startServer() {
       }
 
       if (foundUser) {
+        console.log('✅ MATCH FOUND! Triggering Nodemailer for:', foundUser.username);
+
         // Generate random 6-digit numeric OTP code and 15 minute expiration
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
         const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
@@ -414,10 +469,13 @@ async function startServer() {
 
         try {
           await transporter.sendMail(mailOptions);
+          console.log('📧 EMAIL SUCCESSFULLY SENT to Google SMTP!');
         } catch (error: any) {
-          console.error("Nodemailer Error:", error);
+          console.error("❌ Nodemailer Error:", error);
           return res.status(500).json({ error: "Failed to send verification email. Please check server mail configuration." });
         }
+      } else {
+        console.log(`❌ NO MATCH: The email ${targetEmail} is not in the database. Skipping Nodemailer.`);
       }
 
       // Return generic success message without leaking user existence or OTP

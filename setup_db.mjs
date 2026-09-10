@@ -114,7 +114,7 @@ async function init() {
   if (users.length === 0) {
     await db.query(`
       INSERT INTO user (user_id, username, password_hash, user_role, subscription_tier)
-      VALUES (1, 'default_owner', 'hash', 'ADMIN', 'TIER_1');
+      VALUES (1, 'bazty24@gmail.com', 'hash', 'ADMIN', 'TIER_1');
     `);
     console.log('Created default user with ID 1');
   }
