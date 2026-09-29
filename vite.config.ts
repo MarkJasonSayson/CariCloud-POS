@@ -20,7 +20,7 @@ export default defineConfig(() => {
       // Local bridge to route frontend API calls to the Node.js backend
       proxy: {
         '/api': {
-          target: 'http://localhost:3000',
+          target: 'http://127.0.0.1:3000',
           changeOrigin: true,
         }
       }

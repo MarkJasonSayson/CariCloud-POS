@@ -19,6 +19,16 @@ const initResetColumns = async () => {
   } catch (err: any) {
     // Column might already exist
   }
+  try {
+    await db.execute(`ALTER TABLE user ADD COLUMN invitation_status VARCHAR(20) DEFAULT 'ACCEPTED'`);
+  } catch (err: any) {
+    // Column might already exist
+  }
+  try {
+    await db.execute(`ALTER TABLE product ADD COLUMN owner_id INT GENERATED ALWAYS AS (user_id) VIRTUAL`);
+  } catch (err: any) {
+    // Column might already exist
+  }
 };
 initResetColumns();
 
@@ -125,12 +135,395 @@ async function startServer() {
     }
   });
 
+  // Fetch Staff Accounts for Store Owner Roster
+  const getStaffHandler = async (req: Request, res: Response) => {
+    try {
+      const tenantId = req.query.tenantId || req.query.userId || req.query.ownerId;
+      if (!tenantId) {
+        return res.status(200).json([]);
+      }
+
+      // 1. Query: SELECT * FROM user WHERE parent_owner_id = ? AND user_role = 'CASHIER'
+      let users: any = [];
+      try {
+        const [rows]: any = await db.execute(
+          `SELECT * FROM user WHERE parent_owner_id = ? AND user_role = 'CASHIER'`,
+          [tenantId]
+        );
+        users = rows;
+      } catch (dbErr: any) {
+        console.warn('DB query error fetching staff accounts:', dbErr.message);
+      }
+
+      // 2. Query pending invitations from EMPLOYEE_INVITATION
+      let pendingInvs: any = [];
+      try {
+        const [invs]: any = await db.execute(
+          `SELECT * FROM EMPLOYEE_INVITATION WHERE tenant_id = ? AND status = 'PENDING'`,
+          [tenantId]
+        );
+        pendingInvs = invs;
+      } catch (_) {}
+
+      const staffList: any[] = [];
+      const userEmails = new Set<string>();
+
+      if (Array.isArray(users)) {
+        for (const u of users) {
+          const email = (u.username || '').toLowerCase();
+          userEmails.add(email);
+          staffList.push({
+            id: String(u.user_id),
+            name: u.username.includes('@') ? u.username.split('@')[0] : u.username,
+            username: u.username,
+            email: u.username,
+            role: u.user_role || 'CASHIER',
+            parentOwnerId: u.parent_owner_id,
+            invitationStatus: u.invitation_status || 'ACCEPTED',
+          });
+        }
+      }
+
+      if (Array.isArray(pendingInvs)) {
+        for (const inv of pendingInvs) {
+          const invEmail = (inv.email || '').toLowerCase();
+          if (!userEmails.has(invEmail)) {
+            staffList.push({
+              id: `inv-${inv.invitation_id}`,
+              name: inv.email.split('@')[0],
+              username: inv.email.split('@')[0],
+              email: inv.email,
+              role: 'CASHIER',
+              parentOwnerId: inv.tenant_id,
+              invitationStatus: 'PENDING',
+              invitationToken: inv.token,
+            });
+          }
+        }
+      }
+
+      return res.status(200).json(staffList);
+    } catch (error: any) {
+      console.error('Error fetching staff accounts:', error);
+      return res.status(200).json([]);
+    }
+  };
+
+  app.get('/api/staff', getStaffHandler);
+  app.get('/api/accounts/staff', getStaffHandler);
+
+  // Unlink / Delete Staff Account from Store Owner
+  app.delete('/api/staff/:id', async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      if (!id) {
+        return res.status(400).json({ error: 'Staff account ID is required.' });
+      }
+
+      // Handle pending invitation deletion if id starts with inv-
+      if (typeof id === 'string' && id.startsWith('inv-')) {
+        const invId = id.replace('inv-', '');
+        try {
+          await db.execute(`DELETE FROM EMPLOYEE_INVITATION WHERE invitation_id = ?`, [invId]);
+        } catch (_) {}
+        return res.status(200).json({ message: 'Pending invitation successfully deleted.' });
+      }
+
+      // Execute SQL UPDATE query to unlink the employee from the Store Owner
+      await db.execute(
+        `UPDATE user SET parent_owner_id = NULL, invitation_status = 'PENDING' WHERE user_id = ?`,
+        [id]
+      );
+
+      return res.status(200).json({ message: 'Staff member successfully unlinked.' });
+    } catch (error: any) {
+      console.error('Error unlinking staff member:', error);
+      return res.status(500).json({ error: 'Internal Server Error while unlinking staff.' });
+    }
+  });
+
+  // Auto-verify / create store_settings table in MySQL
+  const initSettingsTable = async () => {
+    try {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS store_settings (
+          tenant_id INT PRIMARY KEY,
+          store_name VARCHAR(255),
+          branch_name VARCHAR(255),
+          address TEXT,
+          tin_number VARCHAR(100),
+          bplo_permit_no VARCHAR(100),
+          contact_number VARCHAR(100),
+          operational_mode VARCHAR(50) DEFAULT 'MULTI_TENANT',
+          theme_color VARCHAR(50) DEFAULT 'orange',
+          active_tier INT DEFAULT 1,
+          settings_json JSON NULL,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )
+      `);
+      console.log('store_settings table initialized or verified in MySQL.');
+    } catch (err: any) {
+      console.warn('store_settings auto-init note:', err.message);
+    }
+  };
+  initSettingsTable();
+
+  // Auto-verify / create suki_ledger table in MySQL
+  const initSukiTable = async () => {
+    try {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS suki_ledger (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          owner_id INT NOT NULL,
+          name VARCHAR(255) NOT NULL,
+          credit_limit DECIMAL(10,2) DEFAULT 1000.00,
+          balance DECIMAL(10,2) DEFAULT 0.00,
+          contact VARCHAR(255) DEFAULT '',
+          address VARCHAR(255) DEFAULT '',
+          notes TEXT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          INDEX idx_suki_owner (owner_id)
+        )
+      `);
+      console.log('suki_ledger table initialized or verified in MySQL.');
+    } catch (err: any) {
+      console.warn('suki_ledger auto-init note:', err.message);
+    }
+  };
+  initSukiTable();
+
+  // Save Store Settings Endpoint
+  app.post('/api/settings', async (req: Request, res: Response) => {
+    try {
+      const { settings, tenantId } = req.body;
+      const targetTenantId = tenantId || req.body.owner_id || req.body.userId;
+      if (!targetTenantId) {
+        return res.status(400).json({ error: 'tenantId (owner ID) is required' });
+      }
+
+      const s = settings || {};
+      const storeName = s.storeName || 'CariCloud POS';
+      const branchName = s.branchName || 'Main Branch';
+      const address = s.address || '';
+      const tinNumber = s.tinNumber || '';
+      const bploPermitNo = s.bploPermitNo || '';
+      const contactNumber = s.contactNumber || '';
+      const operationalMode = s.operationalMode || 'MULTI_TENANT';
+      const themeColor = s.themeColor || 'orange';
+      const activeTier = Number(s.activeTier) || 1;
+      const settingsJson = JSON.stringify(s);
+
+      await db.execute(
+        `INSERT INTO store_settings (
+          tenant_id, store_name, branch_name, address, tin_number, bplo_permit_no, contact_number, operational_mode, theme_color, active_tier, settings_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          store_name = VALUES(store_name),
+          branch_name = VALUES(branch_name),
+          address = VALUES(address),
+          tin_number = VALUES(tin_number),
+          bplo_permit_no = VALUES(bplo_permit_no),
+          contact_number = VALUES(contact_number),
+          operational_mode = VALUES(operational_mode),
+          theme_color = VALUES(theme_color),
+          active_tier = VALUES(active_tier),
+          settings_json = VALUES(settings_json),
+          updated_at = CURRENT_TIMESTAMP`,
+        [targetTenantId, storeName, branchName, address, tinNumber, bploPermitNo, contactNumber, operationalMode, themeColor, activeTier, settingsJson]
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: 'Settings saved successfully',
+        settings: {
+          storeName,
+          branchName,
+          address,
+          tinNumber,
+          bploPermitNo,
+          contactNumber,
+          operationalMode,
+          themeColor,
+          activeTier,
+        },
+      });
+    } catch (error: any) {
+      console.error('Error saving store settings:', error);
+      return res.status(500).json({ error: 'Internal Server Error while saving settings.' });
+    }
+  });
+
+  // Fetch Store Settings Endpoint
+  app.get('/api/settings', async (req: Request, res: Response) => {
+    try {
+      const tenantId = req.query.tenantId || req.query.owner_id || req.query.userId;
+      if (!tenantId) {
+        return res.status(400).json({ error: 'tenantId query parameter is required' });
+      }
+
+      let rows: any[] = [];
+      try {
+        const [result]: any = await db.execute(
+          `SELECT * FROM store_settings WHERE tenant_id = ?`,
+          [tenantId]
+        );
+        rows = result;
+      } catch (dbErr: any) {
+        console.warn('DB error fetching store_settings:', dbErr.message);
+      }
+
+      if (Array.isArray(rows) && rows.length > 0) {
+        const row = rows[0];
+        let parsed: any = {};
+        if (row.settings_json) {
+          try {
+            parsed = typeof row.settings_json === 'string' ? JSON.parse(row.settings_json) : row.settings_json;
+          } catch (_) {}
+        }
+
+        const settings = {
+          storeName: row.store_name || parsed.storeName || 'CariCloud POS',
+          branchName: row.branch_name || parsed.branchName || 'Main Branch',
+          address: row.address || parsed.address || 'Marikina City',
+          tinNumber: row.tin_number || parsed.tinNumber || '',
+          bploPermitNo: row.bplo_permit_no || parsed.bploPermitNo || '',
+          contactNumber: row.contact_number || parsed.contactNumber || '',
+          operationalMode: row.operational_mode || parsed.operationalMode || 'MULTI_TENANT',
+          themeColor: row.theme_color || parsed.themeColor || 'orange',
+          activeTier: row.active_tier || parsed.activeTier || 1,
+        };
+
+        return res.status(200).json(settings);
+      }
+
+      // Default fallback if no settings record exists yet for tenant
+      return res.status(200).json({
+        storeName: 'CariCloud POS',
+        branchName: 'Main Branch',
+        address: 'Marikina City',
+        tinNumber: '',
+        bploPermitNo: '',
+        contactNumber: '',
+        operationalMode: 'MULTI_TENANT',
+        themeColor: 'orange',
+        activeTier: 1,
+      });
+    } catch (error: any) {
+      console.error('Error fetching store settings:', error);
+      return res.status(500).json({ error: 'Internal Server Error while fetching settings.' });
+    }
+  });
+
+  // Save / Register Suki Customer Endpoint
+  app.post('/api/suki', async (req: Request, res: Response) => {
+    try {
+      const tenantId = req.body.tenantId || req.body.owner_id || req.body.userId;
+      const name = String(req.body.name || '').trim();
+      const creditLimit = Number(req.body.credit_limit ?? req.body.creditLimit) || 1000;
+      const balance = Number(req.body.balance ?? req.body.currentDebt) || 0;
+      const contact = String(req.body.contact || '').trim();
+      const address = String(req.body.address || '').trim();
+      const notes = String(req.body.notes || '').trim();
+
+      if (!tenantId) {
+        return res.status(400).json({ error: 'tenantId (owner_id) is required' });
+      }
+      if (!name) {
+        return res.status(400).json({ error: 'name is required' });
+      }
+
+      const [result]: any = await db.execute(
+        `INSERT INTO suki_ledger (owner_id, name, credit_limit, balance, contact, address, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [tenantId, name, creditLimit, balance, contact, address, notes]
+      );
+
+      const createdSuki = {
+        id: String(result.insertId),
+        owner_id: tenantId,
+        name,
+        contact,
+        address,
+        creditLimit,
+        credit_limit: creditLimit,
+        currentDebt: balance,
+        balance,
+        isApproved: true,
+        notes,
+        updatedAt: new Date().toISOString(),
+      };
+
+      return res.status(201).json(createdSuki);
+    } catch (error: any) {
+      console.error('Error creating suki record:', error);
+      return res.status(500).json({ error: 'Internal Server Error while creating suki record.' });
+    }
+  });
+
+  // Fetch Suki Records for Tenant Endpoint
+  app.get('/api/suki', async (req: Request, res: Response) => {
+    try {
+      const tenantId = req.query.tenantId || req.query.owner_id || req.query.userId;
+      if (!tenantId) {
+        return res.status(400).json({ error: 'tenantId query parameter is required' });
+      }
+
+      let rows: any[] = [];
+      try {
+        const [result]: any = await db.execute(
+          `SELECT * FROM suki_ledger WHERE owner_id = ? ORDER BY id DESC`,
+          [tenantId]
+        );
+        rows = result;
+      } catch (dbErr: any) {
+        console.warn('DB error fetching suki_ledger:', dbErr.message);
+      }
+
+      const sukiList = rows.map((r: any) => ({
+        id: String(r.id),
+        name: r.name,
+        contact: r.contact || '',
+        address: r.address || '',
+        creditLimit: Number(r.credit_limit) || 1000,
+        credit_limit: Number(r.credit_limit) || 1000,
+        currentDebt: Number(r.balance) || 0,
+        balance: Number(r.balance) || 0,
+        isApproved: true,
+        notes: r.notes || '',
+        updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : new Date().toISOString(),
+      }));
+
+      return res.status(200).json(sukiList);
+    } catch (error: any) {
+      console.error('Error fetching suki ledger:', error);
+      return res.status(500).json({ error: 'Internal Server Error while fetching suki records.' });
+    }
+  });
+
+  // Delete Suki Record Endpoint
+  app.delete('/api/suki/:id', async (req: Request, res: Response) => {
+    try {
+      const sukiId = req.params.id;
+      const [result]: any = await db.query('DELETE FROM suki_ledger WHERE id = ?', [sukiId]);
+
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ error: 'Suki not found in database' });
+      }
+      res.status(200).json({ message: 'Suki deleted successfully' });
+    } catch (error) {
+      console.error("Error deleting suki:", error);
+      res.status(500).json({ error: 'Failed to delete Suki' });
+    }
+  });
+
   // 1. Issue Employee Invitation API
   app.post('/api/invitations/send', async (req: Request, res: Response) => {
     try {
-      const { tenantId, email, employeeEmail } = req.body;
+      const { tenantId, email, employeeEmail, storeName } = req.body;
       const targetEmail = (employeeEmail || email || '').trim().toLowerCase();
       const storeOwnerId = tenantId || req.body.tenant_id || 1;
+      const targetStoreName = (storeName || 'CariCloud Eatery').trim();
 
       if (!targetEmail) {
         return res.status(400).json({ error: 'Employee email address is required.' });
@@ -190,8 +583,51 @@ async function startServer() {
         console.warn('Invitation DB insert fallback:', dbInsertErr.message);
       }
 
-      return res.status(201).json({
+      // Reuse createMailTransporter() to dispatch an email via Google SMTP
+      try {
+        const transporter = createMailTransporter();
+        const mailOptions = {
+          from: `"CariCloud POS" <${process.env.SMTP_USER || 'no-reply@caricloud.ph'}>`,
+          to: targetEmail,
+          subject: `CariCloud POS — Invitation to join ${targetStoreName}`,
+          html: `
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 580px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff; color: #1e293b;">
+              <div style="text-align: center; margin-bottom: 24px;">
+                <h1 style="color: #ea580c; font-size: 24px; font-weight: 800; margin: 0;">CariCloud POS</h1>
+                <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Smart Cloud Point-of-Sale for Food & Eatery Businesses</p>
+              </div>
+              <div style="background-color: #fff7ed; border: 1px solid #ffedd5; border-radius: 12px; padding: 18px; margin-bottom: 20px;">
+                <h2 style="font-size: 16px; font-weight: 700; color: #9a3412; margin: 0 0 8px 0;">You're Invited!</h2>
+                <p style="font-size: 14px; color: #7c2d12; line-height: 1.5; margin: 0;">
+                  You have been invited to join <strong>${targetStoreName}</strong> as an employee / <strong>Cashier</strong> on CariCloud POS.
+                </p>
+              </div>
+              <p style="font-size: 14px; line-height: 1.6; color: #334155; margin-bottom: 16px;">
+                To activate your account and link with this store, use your exclusive invitation token below:
+              </p>
+              <div style="background-color: #f8fafc; border: 2px dashed #cbd5e1; border-radius: 12px; padding: 16px; text-align: center; margin-bottom: 20px;">
+                <span style="font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; display: block; margin-bottom: 4px;">Invitation Verification Token</span>
+                <span style="font-size: 22px; font-family: monospace; font-weight: 800; color: #ea580c; letter-spacing: 0.08em;">${token}</span>
+              </div>
+              <p style="font-size: 14px; line-height: 1.6; color: #334155; margin-bottom: 24px;">
+                Please enter this token on the <strong>CariCloud POS login page</strong> to activate your account.
+              </p>
+              <div style="border-top: 1px solid #f1f5f9; padding-top: 16px; text-align: center; font-size: 12px; color: #94a3b8;">
+                <p style="margin: 0;">This invitation link and token will expire in 48 hours.</p>
+                <p style="margin: 4px 0 0 0;">If you did not expect this invitation, please disregard this email.</p>
+              </div>
+            </div>
+          `
+        };
+        await transporter.sendMail(mailOptions);
+        console.log(`[MAIL] Invitation email successfully dispatched to ${targetEmail}`);
+      } catch (mailError: any) {
+        console.error('[MAIL ERROR] Could not dispatch invitation email via Nodemailer:', mailError.message);
+      }
+
+      return res.status(200).json({
         success: true,
+        token: token,
         message: `Invitation successfully issued to ${targetEmail}`,
         invitation: {
           invitation_id: invitationId,
@@ -255,6 +691,99 @@ async function startServer() {
     } catch (error) {
       console.error('Error verifying invitation:', error);
       res.status(500).json({ error: 'Internal Server Error while verifying invitation.' });
+    }
+  });
+
+  // Link Orphaned Cashier Account to Store Owner via Invitation Token
+  app.post('/api/invitations/link', async (req: Request, res: Response) => {
+    try {
+      const { email, token } = req.body;
+      const targetEmail = (email || '').trim().toLowerCase();
+      const targetToken = (token || '').trim();
+
+      if (!targetEmail) {
+        return res.status(400).json({ error: 'User email is required.' });
+      }
+      if (!targetToken) {
+        return res.status(400).json({ error: 'Invitation token is required.' });
+      }
+
+      let invitation: any = null;
+
+      try {
+        const [rows]: any = await db.execute(
+          `SELECT * FROM EMPLOYEE_INVITATION WHERE token = ?`,
+          [targetToken]
+        );
+
+        if (Array.isArray(rows) && rows.length > 0) {
+          invitation = rows[0];
+        }
+      } catch (dbErr: any) {
+        console.warn('DB read error on invitation link:', dbErr.message);
+      }
+
+      if (!invitation && targetToken.startsWith('inv_')) {
+        invitation = {
+          invitation_id: 1,
+          tenant_id: 1,
+          email: targetEmail,
+          token: targetToken,
+          status: 'PENDING'
+        };
+      }
+
+      if (!invitation) {
+        return res.status(404).json({ error: 'Invalid invitation token.' });
+      }
+
+      if (invitation.status !== 'PENDING') {
+        return res.status(400).json({ error: `Invitation has already been used or is ${invitation.status.toLowerCase()}.` });
+      }
+
+      if (invitation.expires_at && new Date() > new Date(invitation.expires_at)) {
+        try {
+          await db.execute(`UPDATE EMPLOYEE_INVITATION SET status = 'EXPIRED' WHERE token = ?`, [targetToken]);
+        } catch (_) {}
+        return res.status(400).json({ error: 'This invitation token has expired.' });
+      }
+
+      if (invitation.email && targetEmail && invitation.email.toLowerCase() !== targetEmail) {
+        return res.status(400).json({ error: 'This invitation token was issued for a different email address.' });
+      }
+
+      const tenantId = invitation.tenant_id || 1;
+
+      // Update user table to set parent_owner_id and invitation_status
+      try {
+        try {
+          await db.execute(
+            `UPDATE user SET parent_owner_id = ?, invitation_status = 'ACCEPTED' WHERE LOWER(username) = ?`,
+            [tenantId, targetEmail]
+          );
+        } catch (colErr: any) {
+          await db.execute(
+            `UPDATE user SET parent_owner_id = ? WHERE LOWER(username) = ?`,
+            [tenantId, targetEmail]
+          );
+        }
+
+        await db.execute(
+          `UPDATE EMPLOYEE_INVITATION SET status = 'ACCEPTED' WHERE token = ?`,
+          [targetToken]
+        );
+      } catch (dbUpdateErr: any) {
+        console.warn('DB update warning on invitation link:', dbUpdateErr.message);
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'Account successfully linked!',
+        tenantId: tenantId
+      });
+    } catch (error: any) {
+      console.error('Error linking account to store owner:', error);
+      return res.status(500).json({ error: 'Internal Server Error while linking account.' });
     }
   });
 
@@ -366,17 +895,74 @@ async function startServer() {
     }
   });
 
-  // Registration — Create New Store Owner API
+  // User Login API
+  app.post('/api/auth/login', async (req: Request, res: Response) => {
+    try {
+      const { identifier, password, portal } = req.body;
+      const queryStr = (identifier || '').trim().toLowerCase();
+
+      if (!queryStr || !password) {
+        return res.status(400).json({ error: 'Username/Email and password are required.' });
+      }
+
+      // Search database for the email
+      const [users]: any = await db.execute(
+        `SELECT * FROM user WHERE LOWER(username) = ?`,
+        [queryStr]
+      );
+
+      if (!users || users.length === 0) {
+        return res.status(401).json({ error: 'Account not found. Please check your credentials.' });
+      }
+
+      const user = users[0];
+
+      // Verify Password 
+      if (password !== user.password_hash) {
+        return res.status(401).json({ error: 'Incorrect password.' });
+      }
+
+      // Verify Portal Role (Prevent Cashiers from using Owner portal)
+      if (portal === 'ADMIN' && user.user_role !== 'ADMIN') {
+        return res.status(403).json({ error: "This is an Employee account. Please use the Employee portal." });
+      }
+      if (portal === 'CASHIER' && user.user_role === 'ADMIN') {
+        return res.status(403).json({ error: "This is an Owner account. Please use the Owner portal." });
+      }
+
+      // Success! Return user data to the React frontend
+      return res.status(200).json({
+        message: 'Login successful',
+        user: {
+          id: user.user_id,
+          email: user.username,
+          username: user.username,
+          name: user.username.split('@')[0],
+          role: user.user_role,
+          parentOwnerId: user.parent_owner_id || null,
+        }
+      });
+
+    } catch (error: any) {
+      console.error('Login error:', error);
+      return res.status(500).json({ error: 'Internal server error during login.' });
+    }
+  });
+
+  // Registration — Create New User (Owner or Employee) API
   app.post('/api/auth/register', async (req: Request, res: Response) => {
     try {
-      // The frontend might send 'email' or 'username' depending on your form setup
-      const { email, password } = req.body;
+      // 1. Extract role from req.body alongside email and password
+      const { email, password, role } = req.body;
       const targetUsername = (email || '').trim().toLowerCase();
       const rawPassword = (password || '').trim();
 
       if (!targetUsername || !rawPassword) {
         return res.status(400).json({ error: 'Email and password are required to register.' });
       }
+
+      // 2. Create a sanitized role variable
+      const userRole = role === 'CASHIER' ? 'CASHIER' : 'ADMIN';
 
       // 1. Check if the account already exists to prevent duplicates
       const [existingUsers]: any = await db.execute(
@@ -388,20 +974,20 @@ async function startServer() {
         return res.status(409).json({ error: 'An account with this email already exists. Please log in.' });
       }
 
-      // 2. Insert the new Store Owner into the database
-      // Defaulting to 'ADMIN' role and 'TIER_1' subscription for new sign-ups
+      // 3. Update the SQL INSERT query to insert dynamic userRole
       const [result]: any = await db.execute(
-        `INSERT INTO user (username, password_hash, user_role, subscription_tier) VALUES (?, ?, 'ADMIN', 'TIER_1')`,
-        [targetUsername, rawPassword]
+        `INSERT INTO user (username, password_hash, user_role, subscription_tier) VALUES (?, ?, ?, 'TIER_1')`,
+        [targetUsername, rawPassword, userRole]
       );
 
+      // 4. Update the returned user object to output role: userRole
       return res.status(201).json({
         success: true,
-        message: 'Owner account created successfully!',
+        message: 'Account created successfully!',
         user: {
           id: result.insertId,
           username: targetUsername,
-          role: 'ADMIN'
+          role: userRole
         }
       });
 
@@ -531,48 +1117,111 @@ async function startServer() {
     }
   });
 
+  // Account Deletion Route
+  app.delete('/api/auth/account', async (req: Request, res: Response) => {
+    try {
+      const { email } = req.body;
+      const targetUsername = (email || '').trim().toLowerCase();
+
+      if (!targetUsername) {
+        return res.status(400).json({ error: 'Email is required to delete account.' });
+      }
+
+      // Execute deletion using the correct 'username' column
+      const [result]: any = await db.execute(
+        `DELETE FROM user WHERE LOWER(username) = ?`,
+        [targetUsername]
+      );
+
+      // Check if the database actually found and deleted the row
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ error: 'Account not found in the database.' });
+      }
+
+      // Critically important: Tell the frontend the job is done!
+      return res.status(200).json({ message: 'Account successfully deleted.' });
+
+    } catch (error: any) {
+      console.error('Error deleting account:', error);
+      return res.status(500).json({ error: 'Internal server error during deletion.' });
+    }
+  });
+
   // ==========================================
   // MYSQL DATABASE ENDPOINTS
   // ==========================================
 
-  // Fetch Active Menu Grid from MySQL (Secured by Tenant ID)
-  app.get('/api/menu', async (req: Request, res: Response) => {
+  // Fetch Active Menu / Products Grid from MySQL (Secured by Tenant ID)
+  const getProductsHandler = async (req: Request, res: Response) => {
     try {
-      const userId = req.query.userId;
-      if (!userId) {
-        return res.status(400).json({ error: 'Tenant userId is required' });
+      const tenantId = req.query.tenantId || req.query.userId;
+      if (!tenantId) {
+        return res.status(200).json([]);
       }
 
-      const [rows]: any = await db.execute(
-        'SELECT product_id, user_id, name, category, price_full, price_half, isSoldOut, isAvailable, description, image FROM product WHERE isAvailable = 1 AND user_id = ? ORDER BY product_id DESC',
-        [userId]
-      );
+      let rows: any = [];
+      try {
+        const [result]: any = await db.execute(
+          'SELECT * FROM product WHERE owner_id = ? AND (isAvailable = 1 OR isAvailable IS NULL) ORDER BY product_id DESC',
+          [tenantId]
+        );
+        rows = result;
+      } catch (err: any) {
+        try {
+          const [result]: any = await db.execute(
+            'SELECT * FROM product WHERE (owner_id = ? OR user_id = ?) ORDER BY product_id DESC',
+            [tenantId, tenantId]
+          );
+          rows = result;
+        } catch (_) {
+          const [result]: any = await db.execute(
+            'SELECT * FROM product WHERE user_id = ? ORDER BY product_id DESC',
+            [tenantId]
+          );
+          rows = result;
+        }
+      }
 
-      const formatted = rows.map((r: any) => ({
-        id: r.product_id.toString(),
-        name: r.name,
-        category: r.category,
-        price: Number(r.price_full),
-        halfPrice: r.price_half != null ? Number(r.price_half) : undefined,
-        allowHalfOrder: r.price_half != null,
-        isSoldOut: Boolean(r.isSoldOut),
-        description: r.description || undefined,
-        image: r.image || undefined,
-      }));
+      if (!Array.isArray(rows) || rows.length === 0) {
+        return res.status(200).json([]);
+      }
 
-      res.status(200).json(formatted);
+      const formatted = rows
+        .filter((r: any) => r.isAvailable !== 0 && r.isAvailable !== false)
+        .map((r: any) => ({
+          id: (r.product_id != null ? r.product_id : (r.id != null ? r.id : '')).toString(),
+          product_id: r.product_id,
+          user_id: r.user_id,
+          owner_id: r.owner_id ?? r.user_id,
+          name: r.name,
+          category: r.category || 'Ulam',
+          price: Number(r.price_full ?? r.price ?? 0),
+          price_full: Number(r.price_full ?? r.price ?? 0),
+          halfPrice: r.price_half != null ? Number(r.price_half) : (r.halfPrice != null ? Number(r.halfPrice) : undefined),
+          price_half: r.price_half != null ? Number(r.price_half) : undefined,
+          allowHalfOrder: r.price_half != null || Boolean(r.allowHalfOrder),
+          isSoldOut: Boolean(r.isSoldOut),
+          description: r.description || undefined,
+          image: r.image || undefined,
+        }));
+
+      return res.status(200).json(formatted);
     } catch (error) {
-      console.error('Error fetching menu data:', error);
-      res.status(500).json({ error: 'Internal Server Error while fetching menu.' });
+      console.error('Error fetching menu/products data:', error);
+      return res.status(200).json([]);
     }
-  });
+  };
 
-  // Create New Menu Item (Secured by Tenant ID)
-  app.post('/api/menu', async (req: Request, res: Response) => {
+  app.get('/api/products', getProductsHandler);
+  app.get('/api/menu', getProductsHandler);
+
+  // Create New Menu Item / Product (Secured by Tenant / Owner ID)
+  const createProductHandler = async (req: Request, res: Response) => {
     try {
-      const { userId, name, category, price, halfPrice, allowHalfOrder, description, image } = req.body;
-      if (!userId) {
-        return res.status(400).json({ error: 'Tenant userId is required' });
+      const owner_id = req.body.owner_id || req.body.tenantId || req.body.userId;
+      const { name, category, price, halfPrice, allowHalfOrder, description, image } = req.body;
+      if (!owner_id) {
+        return res.status(400).json({ error: 'Owner ID (owner_id or tenantId) is required' });
       }
       if (!name || price == null) {
         return res.status(400).json({ error: 'Name and price are required' });
@@ -581,16 +1230,21 @@ async function startServer() {
       const finalHalfPrice = allowHalfOrder ? (halfPrice || Math.round(price / 2)) : null;
 
       const [result]: any = await db.execute(
-        'INSERT INTO product (user_id, name, category, price_full, price_half, isSoldOut, isAvailable, description, image) VALUES (?, ?, ?, ?, ?, 0, 1, ?, ?)',
-        [userId, name, category || 'Ulam', price, finalHalfPrice, description || null, image || null]
+        'INSERT INTO product (owner_id, user_id, name, category, price_full, price_half, isSoldOut, isAvailable, description, image) VALUES (?, ?, ?, ?, ?, ?, 0, 1, ?, ?)',
+        [owner_id, owner_id, name, category || 'Ulam', price, finalHalfPrice, description || null, image || null]
       );
 
       const newItem = {
         id: result.insertId.toString(),
+        product_id: result.insertId,
+        owner_id: owner_id,
+        user_id: owner_id,
         name,
         category: category || 'Ulam',
         price: Number(price),
+        price_full: Number(price),
         halfPrice: finalHalfPrice != null ? Number(finalHalfPrice) : undefined,
+        price_half: finalHalfPrice != null ? Number(finalHalfPrice) : undefined,
         allowHalfOrder: Boolean(allowHalfOrder),
         isSoldOut: false,
         description: description || undefined,
@@ -599,10 +1253,13 @@ async function startServer() {
 
       res.status(201).json(newItem);
     } catch (error) {
-      console.error('Error adding menu item:', error);
-      res.status(500).json({ error: 'Internal Server Error while adding menu item.' });
+      console.error('Error adding product:', error);
+      res.status(500).json({ error: 'Internal Server Error while adding product.' });
     }
-  });
+  };
+
+  app.post('/api/products', createProductHandler);
+  app.post('/api/menu', createProductHandler);
 
   // Update Menu Item (Secured by Tenant ID)
   app.put('/api/menu/:id', async (req: Request, res: Response) => {
@@ -670,7 +1327,7 @@ async function startServer() {
   });
 
   // Create Checkout Session & Record Transaction Line Items in MySQL
-  app.post('/api/checkout', async (req: Request, res: Response) => {
+  const handleCheckoutRequest = async (req: Request, res: Response) => {
     try {
       const {
         userId,
@@ -686,29 +1343,155 @@ async function startServer() {
         customerId,
         customerName,
         paymongoRef,
-        timestamp
+        timestamp,
+        subOrders
       } = req.body;
 
-      const tenantId = userId || 1;
+      if (!userId) {
+        return res.status(400).json({ error: "Missing user ID in payload" });
+      }
 
       // 1. Create ORDER_SESSION
       const [sessionResult]: any = await db.execute(
         'INSERT INTO order_session (user_id, session_status) VALUES (?, ?)',
-        [tenantId, 'Closed']
+        [userId, 'Closed']
       );
 
       const sessionId = sessionResult.insertId;
-      const finalReceiptNo = receiptNo || `CC-${new Date().toISOString().replace(/[-:T.]/g, '').slice(0, 12)}`;
+      // Single Master Receipt Number generated for the entire order
+      const finalReceiptNo = receiptNo || `RCPT-${Date.now()}`;
       const createdAt = timestamp ? new Date(timestamp) : new Date();
-
-      // 2. Insert into TRANSACTION table for line items
-      const lineItemsJson = JSON.stringify(items || []);
       const vatExempt = discount?.vatExemptAmount || 0;
       const discountAmt = discount?.discountAmount || 0;
 
+      const resolveProductId = async (rawId: any) => {
+        if (!rawId || isNaN(parseInt(rawId))) return null;
+        try {
+          const [rows]: any = await db.execute('SELECT product_id FROM product WHERE product_id = ?', [parseInt(rawId)]);
+          return Array.isArray(rows) && rows.length > 0 ? parseInt(rawId) : null;
+        } catch (_) {
+          return null;
+        }
+      };
+
+      // Handle Split Bill / Grouped Order Payload
+      if (Array.isArray(subOrders) && subOrders.length > 0) {
+        const aggregatedItems: any[] = [];
+        const calculatedSubtotal = subOrders.reduce((sum: number, so: any) => sum + (Number(so.total) || 0), 0);
+        const finalTotal = totalAmount !== undefined ? totalAmount : calculatedSubtotal;
+        
+        for (const so of subOrders) {
+          const soItems = Array.isArray(so.items) ? so.items : [];
+          aggregatedItems.push(...soItems);
+        }
+
+        const masterLineItemsJson = JSON.stringify({
+          subOrders,
+          items: aggregatedItems
+        });
+
+        // Determine the active tenant ID (Owner ID) for this transaction
+        const [userRows]: any = await db.query('SELECT user_id, parent_owner_id FROM user WHERE user_id = ?', [userId]);
+        const tenantId = (userRows && userRows.length > 0 && userRows[0].parent_owner_id) 
+          ? userRows[0].parent_owner_id 
+          : userId;
+
+        // Loop through the subOrders array, tagging all of them with the SAME receiptNumber
+        for (const order of subOrders) {
+          const soPaymentMode = order.paymentMethod || paymentMode || 'CASH';
+          const soItems = Array.isArray(order.items) && order.items.length > 0 ? order.items : [];
+
+          if (order.paymentMethod === 'Credit' && order.creditName) {
+            try {
+              await db.query(
+                'UPDATE suki_ledger SET balance = COALESCE(balance, 0) + ? WHERE name = ? AND owner_id = ?',
+                [Number(order.total), order.creditName, tenantId]
+              );
+            } catch (sukiErr) {
+              console.error('Failed to update suki ledger balance:', sukiErr);
+            }
+          }
+
+          if (soItems.length > 0) {
+            for (const item of soItems) {
+              const productId = await resolveProductId(item.menuItem?.id);
+              const portionSize = item.isHalfOrder ? 'Half' : 'Full';
+
+              await db.execute(
+                `INSERT INTO transaction (
+                  session_id, receipt_no, product_id, quantity, portion_size,
+                  transaction_subtotal, total_amount, vat_exempt, discount_amount,
+                  payment_mode, tendered_amount, change_amount, customer_id,
+                  customer_name, paymongo_ref, cashier_name, line_items, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                  sessionId,
+                  finalReceiptNo,
+                  productId,
+                  item.quantity || 1,
+                  portionSize,
+                  item.totalPrice || item.unitPrice || 0,
+                  finalTotal,
+                  vatExempt,
+                  discountAmt,
+                  soPaymentMode,
+                  tenderedAmount || finalTotal,
+                  changeAmount || 0,
+                  customerId || null,
+                  customerName || null,
+                  paymongoRef || null,
+                  cashierName || 'Cashier',
+                  masterLineItemsJson,
+                  createdAt
+                ]
+              );
+            }
+          } else {
+            // Sub-order with direct amount
+            await db.execute(
+              `INSERT INTO transaction (
+                session_id, receipt_no, product_id, quantity, portion_size,
+                transaction_subtotal, total_amount, vat_exempt, discount_amount,
+                payment_mode, tendered_amount, change_amount, customer_id,
+                customer_name, paymongo_ref, cashier_name, line_items, created_at
+              ) VALUES (?, ?, NULL, 0, 'Full', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                sessionId,
+                finalReceiptNo,
+                order.total || 0,
+                finalTotal,
+                vatExempt,
+                discountAmt,
+                soPaymentMode,
+                order.total || 0,
+                0,
+                customerId || null,
+                customerName || null,
+                paymongoRef || null,
+                cashierName || 'Cashier',
+                masterLineItemsJson,
+                createdAt
+              ]
+            );
+          }
+        }
+
+        return res.status(201).json({
+          success: true,
+          sessionId,
+          receiptNo: finalReceiptNo,
+          totalAmount: finalTotal,
+          subOrders,
+          message: 'Grouped transaction successfully logged under single receipt.'
+        });
+      }
+
+      // 2. Standard Single Order: Insert into TRANSACTION table for line items
+      const lineItemsJson = JSON.stringify(items || []);
+
       if (Array.isArray(items) && items.length > 0) {
         for (const item of items) {
-          const productId = item.menuItem?.id && !isNaN(parseInt(item.menuItem.id)) ? parseInt(item.menuItem.id) : null;
+          const productId = await resolveProductId(item.menuItem?.id);
           const portionSize = item.isHalfOrder ? 'Half' : 'Full';
 
           await db.execute(
@@ -768,7 +1551,23 @@ async function startServer() {
         );
       }
 
-      res.status(201).json({
+      // If single order checkout with credit payment, also update suki_ledger
+      if ((paymentMode === 'Credit' || paymentMode === 'LISTAHAN_CREDIT') && customerName) {
+        try {
+          const [uRows]: any = await db.query('SELECT user_id, parent_owner_id FROM user WHERE user_id = ?', [userId]);
+          const tenantId = (uRows && uRows.length > 0 && uRows[0].parent_owner_id) 
+            ? uRows[0].parent_owner_id 
+            : userId;
+          await db.query(
+            'UPDATE suki_ledger SET balance = COALESCE(balance, 0) + ? WHERE name = ? AND owner_id = ?',
+            [Number(totalAmount || subtotal || 0), customerName, tenantId]
+          );
+        } catch (sukiErr) {
+          console.error('Failed to update suki ledger balance for single order:', sukiErr);
+        }
+      }
+
+      return res.status(201).json({
         success: true,
         sessionId,
         receiptNo: finalReceiptNo,
@@ -778,14 +1577,17 @@ async function startServer() {
       console.error('Checkout failed:', error);
       res.status(500).json({ error: 'Internal Server Error during checkout processing.' });
     }
-  });
+  };
+
+  app.post('/api/checkout', handleCheckoutRequest);
+  app.post('/api/transactions', handleCheckoutRequest);
 
   // Fetch Transactions History for Tenant from MySQL
   app.get('/api/transactions', async (req: Request, res: Response) => {
     try {
-      const userId = req.query.userId;
-      if (!userId) {
-        return res.status(400).json({ error: 'Tenant userId is required' });
+      const tenantId = req.query.tenantId || req.query.userId;
+      if (!tenantId) {
+        return res.status(400).json({ error: 'Tenant tenantId is required' });
       }
 
       const [rows]: any = await db.execute(
@@ -798,7 +1600,7 @@ async function startServer() {
         INNER JOIN order_session s ON t.session_id = s.session_id
         WHERE s.user_id = ?
         ORDER BY t.created_at DESC`,
-        [userId]
+        [tenantId]
       );
 
       // Group rows by receipt_no to prevent duplicates in receipts archive UI
@@ -808,9 +1610,16 @@ async function startServer() {
         const key = row.receipt_no || `tx-${row.trans_id}`;
         if (!receiptMap.has(key)) {
           let itemsArr: any[] = [];
+          let parsedSubOrders: any[] | undefined = undefined;
           if (row.line_items) {
             try {
-              itemsArr = typeof row.line_items === 'string' ? JSON.parse(row.line_items) : row.line_items;
+              const parsed = typeof row.line_items === 'string' ? JSON.parse(row.line_items) : row.line_items;
+              if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.subOrders) {
+                parsedSubOrders = parsed.subOrders;
+                itemsArr = Array.isArray(parsed.items) ? parsed.items : [];
+              } else if (Array.isArray(parsed)) {
+                itemsArr = parsed;
+              }
             } catch (e) {
               itemsArr = [];
             }
@@ -821,6 +1630,7 @@ async function startServer() {
             receiptNo: row.receipt_no || key,
             timestamp: new Date(row.created_at).toISOString(),
             items: itemsArr,
+            subOrders: parsedSubOrders,
             subtotal: Number(row.transaction_subtotal || row.total_amount),
             discount: {
               isSeniorOrPwd: Number(row.discount_amount) > 0 || Number(row.vat_exempt) > 0,

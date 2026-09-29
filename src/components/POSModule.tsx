@@ -12,7 +12,7 @@ import {
   Sparkles,
   Info
 } from 'lucide-react';
-import { MenuItem, CartItem, Category, SelectedModifier } from '../types';
+import { MenuItem, CartItem, Category, SelectedModifier, Transaction, UserProfile, SubOrder } from '../types';
 
 interface POSModuleProps {
   menuItems: MenuItem[];
@@ -25,7 +25,11 @@ interface POSModuleProps {
   onToggleSeniorPwd: (enabled: boolean, idNumber?: string, customerName?: string) => void;
   seniorPwdId: string;
   seniorPwdName: string;
-  onOpenCheckout: () => void;
+  onOpenCheckout: (currentSubOrders?: SubOrder[]) => void;
+  onCheckoutSuccess?: (tx: Transaction) => void;
+  currentUser?: UserProfile | null;
+  subOrders?: SubOrder[];
+  onUpdateSubOrders?: React.Dispatch<React.SetStateAction<SubOrder[]>>;
 }
 
 const CATEGORIES: Category[] = ['Ulam', 'Rice', 'Drinks', 'Snacks', 'Specials'];
@@ -42,12 +46,31 @@ export const POSModule: React.FC<POSModuleProps> = ({
   seniorPwdId,
   seniorPwdName,
   onOpenCheckout,
+  onCheckoutSuccess,
+  currentUser: propCurrentUser,
+  subOrders: propSubOrders,
+  onUpdateSubOrders: propOnUpdateSubOrders,
 }) => {
+  const currentUser: UserProfile | null = useMemo(() => {
+    if (propCurrentUser) return propCurrentUser;
+    try {
+      const saved = localStorage.getItem('caricloud_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  }, [propCurrentUser]);
+
   const [selectedCategory, setSelectedCategory] = useState<Category | 'ALL'>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [showSeniorModal, setShowSeniorModal] = useState<boolean>(false);
   const [tempId, setTempId] = useState<string>(seniorPwdId || '');
   const [tempName, setTempName] = useState<string>(seniorPwdName || '');
+
+  // Task 1: Stashed Sub-Orders State Management (using prop or fallback local state)
+  const [localSubOrders, setLocalSubOrders] = useState<SubOrder[]>([]);
+  const subOrders = propSubOrders !== undefined ? propSubOrders : localSubOrders;
+  const setSubOrders = propOnUpdateSubOrders || setLocalSubOrders;
 
   // Half-order toggle mode active state per dish card
   const [halfOrderStates, setHalfOrderStates] = useState<Record<string, boolean>>({});
@@ -105,6 +128,30 @@ export const POSModule: React.FC<POSModuleProps> = ({
     setShowSeniorModal(false);
   };
 
+  // Task 1: Add current active cart into stashed sub-orders
+  const handleAddSubOrder = () => {
+    if (cart.length === 0) return;
+    const currentTotal = discountDetails.finalTotal;
+    const newSubOrder = {
+      id: 'sub-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+      items: [...cart],
+      total: currentTotal,
+      paymentMethod: 'Cash',
+      isLocked: false,
+    };
+    setSubOrders((prev) => [...prev, newSubOrder]);
+    onClearCart();
+    if (isSeniorOrPwd) {
+      onToggleSeniorPwd(false);
+    }
+  };
+
+  // Always open CheckoutModal for both single orders and grouped sub-orders
+  const handleProceedToPayment = () => {
+    if (cart.length === 0 && subOrders.length === 0) return;
+    onOpenCheckout(subOrders);
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
@@ -124,7 +171,7 @@ export const POSModule: React.FC<POSModuleProps> = ({
                   placeholder="Search dishes (e.g. Adobo, Rice)..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-11 pr-4 py-2.5 text-xs bg-slate-50 border border-slate-200/80 rounded-full focus:outline-none focus:ring-2 focus:ring-orange-500 focus:bg-white text-slate-900 transition-all font-medium placeholder:text-slate-400"
+                  className="w-full pl-11 pr-4 py-2.5 text-xs bg-slate-50 border border-slate-200/80 rounded-full focus:outline-none focus:ring-2 focus:ring-orange-500 focus:bg-white text-slate-900 transition-all font-medium placeholder:text-slate-400 dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400 dark:focus:bg-slate-800"
                 />
               </div>
 
@@ -381,6 +428,64 @@ export const POSModule: React.FC<POSModuleProps> = ({
               )}
             </div>
 
+            {/* Task 2: Sub-Order UI Panel (Split Bill / Grouped Order) */}
+            <div className="p-4 bg-slate-50/80 border-t border-slate-100 space-y-3">
+              {subOrders.length > 0 && (
+                <div className="space-y-2.5">
+                  {subOrders.map((item, index) => (
+                    <div
+                      key={item.id}
+                      className="bg-slate-50 border border-slate-200 p-3 rounded-xl mb-3 space-y-2"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-extrabold text-xs text-slate-800">
+                          Sub-Order #{index + 1} - {item.items.length} items - ₱{item.total.toFixed(2)}
+                        </span>
+                        {item.isLocked ? (
+                          <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                            PAYMENT LOCKED
+                          </span>
+                        ) : null}
+                      </div>
+
+                      {!item.isLocked && (
+                        <div className="flex items-center gap-2 pt-1">
+                          <select
+                            value={item.paymentMethod}
+                            onChange={(e) => setSubOrders(prev => prev.map(order => order.id === item.id ? { ...order, paymentMethod: e.target.value } : order))}
+                            className="flex-1 text-xs py-1.5 px-2 bg-white border border-slate-200 rounded-lg text-slate-800 font-bold focus:outline-none focus:ring-1 focus:ring-orange-500 dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400"
+                          >
+                            <option value="Cash">Cash</option>
+                            <option value="QR">QR</option>
+                            <option value="Credit">Credit</option>
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSubOrders((prev) =>
+                                prev.map((order) => (order.id === item.id ? { ...order, isLocked: true } : order))
+                              );
+                            }}
+                            className="px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold rounded-lg shadow-xs transition cursor-pointer"
+                          >
+                            Lock Payment
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={handleAddSubOrder}
+                className="w-full py-2.5 bg-white hover:bg-orange-50 border border-slate-200 hover:border-orange-300 text-slate-800 hover:text-orange-600 font-extrabold rounded-xl text-xs flex items-center justify-center gap-1.5 transition cursor-pointer shadow-xs"
+              >
+                <span>+ Add Another Transaction</span>
+              </button>
+            </div>
+
             {/* Statutory Discount Toggle (Senior Citizen / PWD 20% + 12% VAT) */}
             <div className="p-4 bg-orange-50/60 border-t border-slate-100 space-y-2.5">
               <div className="flex items-center justify-between">
@@ -445,17 +550,22 @@ export const POSModule: React.FC<POSModuleProps> = ({
                 )}
 
                 <div className="pt-3 border-t border-slate-800 flex justify-between items-baseline">
-                  <span className="text-sm font-black text-white uppercase tracking-wider">Total Bill</span>
+                  <span className="text-sm font-black text-white uppercase tracking-wider">
+                    {subOrders.length > 0 ? 'Grand Total' : 'Total Bill'}
+                  </span>
                   <span className="text-2xl font-black text-orange-400">
-                    ₱{discountDetails.finalTotal.toFixed(2)}
+                    ₱{(
+                      subOrders.reduce((sum, so) => sum + so.total, 0) +
+                      (cart.length > 0 ? discountDetails.finalTotal : 0)
+                    ).toFixed(2)}
                   </span>
                 </div>
               </div>
 
               {/* Checkout Action Button */}
               <button
-                disabled={cart.length === 0}
-                onClick={onOpenCheckout}
+                disabled={cart.length === 0 && subOrders.length === 0}
+                onClick={handleProceedToPayment}
                 className="w-full py-4 bg-orange-500 hover:bg-orange-600 active:scale-[0.99] disabled:bg-slate-800 disabled:text-slate-600 text-white font-black rounded-2xl text-base shadow-airmee-orange transition flex items-center justify-center space-x-2 cursor-pointer"
               >
                 <span>PROCEED TO PAYMENT</span>
@@ -471,26 +581,26 @@ export const POSModule: React.FC<POSModuleProps> = ({
       {/* Senior Citizen / PWD ID Verification Modal */}
       {showSeniorModal && (
         <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-6 space-y-5 border border-slate-100">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-6 space-y-5 border border-slate-100 dark:bg-slate-900 dark:text-white dark:border-slate-800">
             <div className="flex items-center space-x-2.5 text-orange-600">
-              <div className="w-10 h-10 rounded-full bg-orange-50 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-full bg-orange-50 dark:bg-orange-950/40 flex items-center justify-center">
                 <UserCheck className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="font-extrabold text-base text-slate-900">
+                <h3 className="font-extrabold text-base text-slate-900 dark:text-white">
                   Senior Citizen / PWD Verification
                 </h3>
                 <p className="text-xs text-slate-400">RA 9994 / RA 10754 Statutory Discount</p>
               </div>
             </div>
 
-            <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-2xl border border-slate-100">
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-800/60 p-3 rounded-2xl border border-slate-100 dark:border-slate-700">
               In compliance with Philippine Statutory Law, Senior Citizens and Persons with Disability receive 20% discount and 12% VAT exemption on personal food purchases.
             </p>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
                   ID Number (Mandatory) *
                 </label>
                 <input
@@ -498,12 +608,12 @@ export const POSModule: React.FC<POSModuleProps> = ({
                   placeholder="e.g. SC-MKN-2026-8812"
                   value={tempId}
                   onChange={(e) => setTempId(e.target.value)}
-                  className="w-full px-4 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-orange-500 focus:outline-none focus:bg-white text-slate-900 font-bold"
+                  className="w-full px-4 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-orange-500 focus:outline-none focus:bg-white text-slate-900 font-bold dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400 dark:focus:bg-slate-800"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
                   Cardholder Name (Optional)
                 </label>
                 <input
@@ -511,19 +621,19 @@ export const POSModule: React.FC<POSModuleProps> = ({
                   placeholder="e.g. Cardo Dalisay"
                   value={tempName}
                   onChange={(e) => setTempName(e.target.value)}
-                  className="w-full px-4 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-orange-500 focus:outline-none focus:bg-white text-slate-900 font-medium"
+                  className="w-full px-4 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-orange-500 focus:outline-none focus:bg-white text-slate-900 font-medium dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400 dark:focus:bg-slate-800"
                 />
               </div>
             </div>
 
-            <div className="flex items-center justify-end space-x-3 pt-3 border-t border-slate-100">
+            <div className="flex items-center justify-end space-x-3 pt-3 border-t border-slate-100 dark:border-slate-800">
               <button
                 type="button"
                 onClick={() => {
                   setShowSeniorModal(false);
                   if (!seniorPwdId) onToggleSeniorPwd(false);
                 }}
-                className="px-5 py-2.5 text-xs font-bold text-slate-500 hover:text-slate-800 transition cursor-pointer"
+                className="px-5 py-2.5 text-xs font-bold text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition cursor-pointer"
               >
                 Cancel
               </button>

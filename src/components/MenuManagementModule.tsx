@@ -231,7 +231,7 @@ export const MenuManagementModule: React.FC<MenuManagementModuleProps> = ({
               placeholder="Search dishes to inspect stock or prices..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 text-xs bg-slate-50/70 border border-slate-200/80 rounded-2xl focus:outline-none focus:ring-2 focus:ring-orange-500 text-slate-900 font-medium"
+              className="w-full pl-10 pr-4 py-2 text-xs bg-slate-50/70 border border-slate-200/80 rounded-2xl focus:outline-none focus:ring-2 focus:ring-orange-500 text-slate-900 font-medium dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400"
             />
           </div>
 
@@ -384,15 +384,15 @@ export const MenuManagementModule: React.FC<MenuManagementModuleProps> = ({
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
           <form
             onSubmit={handleSaveForm}
-            className="bg-white rounded-2xl shadow-xl max-w-md w-full p-5 space-y-4 border border-[#E8E2DD]"
+            className="bg-white rounded-2xl shadow-xl max-w-md w-full p-5 space-y-4 border border-[#E8E2DD] dark:bg-slate-900 dark:text-white dark:border-slate-800"
           >
-            <h3 className="font-bold text-base text-[#2D241E] border-b border-[#E8E2DD] pb-2">
+            <h3 className="font-bold text-base text-[#2D241E] dark:text-white border-b border-[#E8E2DD] dark:border-slate-800 pb-2">
               {editingItem ? 'Edit Dish Item' : 'Add New Dish Item'}
             </h3>
 
             <div className="space-y-3">
               <div>
-                <label className="block text-xs font-bold text-[#2D241E] mb-1">
+                <label className="block text-xs font-bold text-[#2D241E] dark:text-slate-200 mb-1">
                   Dish Name *
                 </label>
                 <input
@@ -401,19 +401,19 @@ export const MenuManagementModule: React.FC<MenuManagementModuleProps> = ({
                   placeholder="e.g. Pork Sinigang na Baboy"
                   value={formName}
                   onChange={(e) => setFormName(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-[#E8E2DD] rounded-xl focus:ring-2 focus:ring-[#E65100] focus:outline-none"
+                  className="w-full px-3 py-2 text-sm border border-[#E8E2DD] rounded-xl focus:ring-2 focus:ring-[#E65100] focus:outline-none dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-[#2D241E] mb-1">
+                  <label className="block text-xs font-bold text-[#2D241E] dark:text-slate-200 mb-1">
                     Category
                   </label>
                   <select
                     value={formCategory}
                     onChange={(e) => setFormCategory(e.target.value as Category)}
-                    className="w-full px-3 py-2 text-sm bg-white border border-[#E8E2DD] rounded-xl focus:ring-2 focus:ring-[#E65100] focus:outline-none"
+                    className="w-full px-3 py-2 text-sm bg-white border border-[#E8E2DD] rounded-xl focus:ring-2 focus:ring-[#E65100] focus:outline-none dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400"
                   >
                     {CATEGORIES.map((c) => (
                       <option key={c} value={c}>
@@ -424,7 +424,7 @@ export const MenuManagementModule: React.FC<MenuManagementModuleProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-[#2D241E] mb-1">
+                  <label className="block text-xs font-bold text-[#2D241E] dark:text-slate-200 mb-1">
                     Base Price (₱) *
                   </label>
                   <input
@@ -437,15 +437,15 @@ export const MenuManagementModule: React.FC<MenuManagementModuleProps> = ({
                       setFormPrice(val);
                       setFormHalfPrice(Math.round(val / 2));
                     }}
-                    className="w-full px-3 py-2 text-sm border border-[#E8E2DD] rounded-xl focus:ring-2 focus:ring-[#E65100] focus:outline-none font-bold"
+                    className="w-full px-3 py-2 text-sm border border-[#E8E2DD] rounded-xl focus:ring-2 focus:ring-[#E65100] focus:outline-none font-bold dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400"
                   />
                 </div>
               </div>
 
               {/* Half-Order Portion Scaling Switch */}
-              <div className="bg-[#FCFAF7] border border-[#E8E2DD] rounded-xl p-3 space-y-2">
+              <div className="bg-[#FCFAF7] border border-[#E8E2DD] rounded-xl p-3 space-y-2 dark:bg-slate-800/40 dark:border-slate-700">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-[#2D241E]">
+                  <span className="text-xs font-bold text-[#2D241E] dark:text-slate-200">
                     Allow Half-Order Portion Scaling?
                   </span>
                   <input
@@ -458,7 +458,7 @@ export const MenuManagementModule: React.FC<MenuManagementModuleProps> = ({
 
                 {formAllowHalf && (
                   <div>
-                    <label className="block text-[11px] font-bold text-[#756D67] mb-1">
+                    <label className="block text-[11px] font-bold text-[#756D67] dark:text-slate-300 mb-1">
                       Half Portion Price (₱)
                     </label>
                     <input
@@ -466,16 +466,16 @@ export const MenuManagementModule: React.FC<MenuManagementModuleProps> = ({
                       min="1"
                       value={formHalfPrice}
                       onChange={(e) => setFormHalfPrice(parseFloat(e.target.value) || 0)}
-                      className="w-full px-3 py-1.5 text-sm border border-[#E8E2DD] rounded-xl focus:ring-2 focus:ring-[#E65100] focus:outline-none font-bold text-[#E65100]"
+                      className="w-full px-3 py-1.5 text-sm border border-[#E8E2DD] rounded-xl focus:ring-2 focus:ring-[#E65100] focus:outline-none font-bold text-[#E65100] dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400"
                     />
                   </div>
                 )}
               </div>
 
               {/* Dish Image Management */}
-              <div className="bg-[#FCFAF7] border border-[#E8E2DD] rounded-xl p-3.5 space-y-3">
+              <div className="bg-[#FCFAF7] border border-[#E8E2DD] rounded-xl p-3.5 space-y-3 dark:bg-slate-800/40 dark:border-slate-700">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-[#2D241E] flex items-center gap-1.5">
+                  <label className="text-xs font-bold text-[#2D241E] dark:text-slate-200 flex items-center gap-1.5">
                     <ImageIcon className="w-4 h-4 text-[#E65100]" />
                     <span>Dish Photo / Display Image</span>
                   </label>
@@ -505,7 +505,7 @@ export const MenuManagementModule: React.FC<MenuManagementModuleProps> = ({
 
                 <div className="flex gap-3">
                   {/* Image Preview Box */}
-                  <div className="w-20 h-20 rounded-xl overflow-hidden bg-slate-100 border border-[#E8E2DD] shrink-0 relative flex items-center justify-center">
+                  <div className="w-20 h-20 rounded-xl overflow-hidden bg-slate-100 border border-[#E8E2DD] shrink-0 relative flex items-center justify-center dark:bg-slate-800 dark:border-slate-700">
                     {formImage ? (
                       <img
                         src={formImage}
@@ -524,19 +524,19 @@ export const MenuManagementModule: React.FC<MenuManagementModuleProps> = ({
                       placeholder="Paste Image URL (https://...)"
                       value={formImage}
                       onChange={(e) => setFormImage(e.target.value)}
-                      className="w-full px-2.5 py-1.5 text-xs border border-[#E8E2DD] rounded-lg focus:ring-2 focus:ring-[#E65100] focus:outline-none"
+                      className="w-full px-2.5 py-1.5 text-xs border border-[#E8E2DD] rounded-lg focus:ring-2 focus:ring-[#E65100] focus:outline-none dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400"
                     />
 
                     {/* Quick Preset Pickers */}
                     <div>
-                      <span className="text-[10px] text-[#756D67] font-bold block mb-1">Quick Filipino Dish Preset Photos:</span>
+                      <span className="text-[10px] text-[#756D67] dark:text-slate-400 font-bold block mb-1">Quick Filipino Dish Preset Photos:</span>
                       <div className="flex flex-wrap gap-1">
                         {PRESET_DISH_IMAGES.map((preset, idx) => (
                           <button
                             key={idx}
                             type="button"
                             onClick={() => setFormImage(preset.url)}
-                            className="text-[10px] bg-white border border-[#E8E2DD] hover:border-[#E65100] text-[#2D241E] px-2 py-0.5 rounded transition cursor-pointer font-medium"
+                            className="text-[10px] bg-white border border-[#E8E2DD] hover:border-[#E65100] text-[#2D241E] px-2 py-0.5 rounded transition cursor-pointer font-medium dark:bg-slate-800 dark:text-white dark:border-slate-700"
                           >
                             {preset.name}
                           </button>
@@ -548,7 +548,7 @@ export const MenuManagementModule: React.FC<MenuManagementModuleProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-[#2D241E] mb-1">
+                <label className="block text-xs font-bold text-[#2D241E] dark:text-slate-200 mb-1">
                   Description / Ingredients (Optional)
                 </label>
                 <textarea
@@ -556,16 +556,16 @@ export const MenuManagementModule: React.FC<MenuManagementModuleProps> = ({
                   placeholder="e.g. Tender pork stewed in sour tamarind broth..."
                   value={formDesc}
                   onChange={(e) => setFormDesc(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-[#E8E2DD] rounded-xl focus:ring-2 focus:ring-[#E65100] focus:outline-none"
+                  className="w-full px-3 py-2 text-sm border border-[#E8E2DD] rounded-xl focus:ring-2 focus:ring-[#E65100] focus:outline-none dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400"
                 />
               </div>
             </div>
 
-            <div className="flex items-center justify-end space-x-2 pt-3 border-t border-[#E8E2DD]">
+            <div className="flex items-center justify-end space-x-2 pt-3 border-t border-[#E8E2DD] dark:border-slate-800">
               <button
                 type="button"
                 onClick={() => setIsModalOpen(false)}
-                className="px-4 py-2 text-xs font-semibold text-[#756D67] hover:bg-[#FCFAF7] rounded-xl"
+                className="px-4 py-2 text-xs font-semibold text-[#756D67] dark:text-slate-400 hover:bg-[#FCFAF7] dark:hover:bg-slate-800 rounded-xl"
               >
                 Cancel
               </button>

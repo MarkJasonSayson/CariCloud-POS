@@ -139,7 +139,7 @@ export const ReceiptsArchiveModule: React.FC<ReceiptsArchiveModuleProps> = ({
               placeholder="Search receipt #, customer, cashier..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 text-xs bg-slate-50/70 border border-slate-200/80 rounded-2xl focus:outline-none focus:ring-2 focus:ring-orange-500 text-slate-900 font-medium"
+              className="w-full pl-10 pr-4 py-2 text-xs bg-slate-50/70 border border-slate-200/80 rounded-2xl focus:outline-none focus:ring-2 focus:ring-orange-500 text-slate-900 font-medium dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400"
             />
           </div>
 

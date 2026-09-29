@@ -89,7 +89,11 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
             </div>
             <div className="flex justify-between text-slate-600">
               <span>Payment Path:</span>
-              <span className="font-extrabold uppercase text-slate-900">{transaction.paymentMethod}</span>
+              <span className="font-extrabold text-slate-900">
+                {transaction.subOrders && transaction.subOrders.length > 0
+                  ? `Split Bill (${transaction.subOrders.map(s => s.paymentMethod || 'Cash').join(' / ')})`
+                  : transaction.paymentMethod}
+              </span>
             </div>
 
             {transaction.discount.isSeniorOrPwd && (
@@ -114,28 +118,67 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
               <span>AMOUNT</span>
             </div>
 
-            {transaction.items.map((item) => (
-              <div key={item.cartItemId} className="flex justify-between items-start">
-                <div>
-                  <div className="font-bold text-slate-900">
-                    {item.quantity}x {item.menuItem.name}
-                    {item.isHalfOrder && ' (HALF)'}
+            {transaction.subOrders && transaction.subOrders.length > 0 ? (
+              transaction.subOrders.map((so, soIdx) => (
+                <div key={so.id || soIdx} className="space-y-1.5 pt-1">
+                  <div className="flex justify-between items-center text-[10px] font-black tracking-wider text-orange-600 bg-orange-50/80 px-2 py-0.5 rounded-md border border-orange-100">
+                    <span>Sub-Order #{soIdx + 1} ({so.paymentMethod || 'Cash'}{so.paymentMethod === 'Credit' && so.creditName ? ` - ${so.creditName}` : ''})</span>
+                    <span>₱{so.total.toFixed(2)}</span>
                   </div>
-                  <div className="text-[10px] text-slate-400">
-                    @ ₱{item.unitPrice.toFixed(2)}
-                  </div>
+                  {so.items.map((item) => (
+                    <div key={item.cartItemId} className="flex justify-between items-start pl-2">
+                      <div>
+                        <div className="font-bold text-slate-900">
+                          {item.quantity}x {item.menuItem.name}
+                          {item.isHalfOrder && ' (HALF)'}
+                        </div>
+                        <div className="text-[10px] text-slate-400">
+                          @ ₱{item.unitPrice.toFixed(2)}
+                        </div>
+                      </div>
+                      <div className="font-black text-slate-900">₱{item.totalPrice.toFixed(2)}</div>
+                    </div>
+                  ))}
                 </div>
-                <div className="font-black text-slate-900">₱{item.totalPrice.toFixed(2)}</div>
-              </div>
-            ))}
+              ))
+            ) : (
+              transaction.items.map((item) => (
+                <div key={item.cartItemId} className="flex justify-between items-start">
+                  <div>
+                    <div className="font-bold text-slate-900">
+                      {item.quantity}x {item.menuItem.name}
+                      {item.isHalfOrder && ' (HALF)'}
+                    </div>
+                    <div className="text-[10px] text-slate-400">
+                      @ ₱{item.unitPrice.toFixed(2)}
+                    </div>
+                  </div>
+                  <div className="font-black text-slate-900">₱{item.totalPrice.toFixed(2)}</div>
+                </div>
+              ))
+            )}
           </div>
 
           {/* Math & Totals Breakdown */}
           <div className="space-y-1.5 text-[11px] border-b border-dashed border-slate-300 pb-3">
-            <div className="flex justify-between text-slate-600">
-              <span>Gross Order Subtotal:</span>
-              <span className="font-bold text-slate-900">₱{transaction.subtotal.toFixed(2)}</span>
-            </div>
+            {transaction.subOrders && transaction.subOrders.length > 0 ? (
+              <>
+                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                  Sub-Order Payments Breakdown
+                </div>
+                {transaction.subOrders.map((so, soIdx) => (
+                  <div key={so.id || soIdx} className="flex justify-between text-slate-700">
+                    <span className="font-medium">Sub-Total {soIdx + 1} ({so.paymentMethod || 'Cash'}{so.paymentMethod === 'Credit' && so.creditName ? ` - ${so.creditName}` : ''}):</span>
+                    <span className="font-bold text-slate-900">₱{so.total.toFixed(2)}</span>
+                  </div>
+                ))}
+              </>
+            ) : (
+              <div className="flex justify-between text-slate-600">
+                <span>Gross Order Subtotal:</span>
+                <span className="font-bold text-slate-900">₱{transaction.subtotal.toFixed(2)}</span>
+              </div>
+            )}
 
             {transaction.discount.isSeniorOrPwd && (
               <>
@@ -150,38 +193,51 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
               </>
             )}
 
-            <div className="flex justify-between text-base font-black text-slate-900 pt-2">
-              <span>TOTAL DUE:</span>
+            <div className="flex justify-between text-base font-black text-slate-900 pt-2 border-t border-slate-200">
+              <span>{transaction.subOrders && transaction.subOrders.length > 0 ? 'GRAND TOTAL:' : 'TOTAL DUE:'}</span>
               <span className="text-orange-600">₱{transaction.totalAmount.toFixed(2)}</span>
             </div>
           </div>
 
           {/* Settlement Details */}
           <div className="space-y-1.5 text-[11px]">
-            {transaction.paymentMethod === 'CASH' && (
+            {transaction.subOrders && transaction.subOrders.length > 0 ? (
+              <div className="bg-slate-100 p-2.5 rounded-xl space-y-1">
+                <span className="font-extrabold text-[10px] text-slate-700 uppercase tracking-wider block">
+                  Split Settlement Confirmed
+                </span>
+                <p className="text-[10px] text-slate-500">
+                  {transaction.subOrders.length} sub-orders logged under Master Receipt #{transaction.receiptNo}.
+                </p>
+              </div>
+            ) : (
               <>
-                <div className="flex justify-between text-slate-600">
-                  <span>Cash Tendered:</span>
-                  <span className="font-bold text-slate-900">₱{(transaction.tenderedAmount || transaction.totalAmount).toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between font-black text-slate-900">
-                  <span>Change Due:</span>
-                  <span className="text-emerald-700">₱{(transaction.changeAmount || 0).toFixed(2)}</span>
-                </div>
+                {(transaction.paymentMethod === 'CASH' || transaction.paymentMethod === 'Cash') && (
+                  <>
+                    <div className="flex justify-between text-slate-600">
+                      <span>Cash Tendered:</span>
+                      <span className="font-bold text-slate-900">₱{(transaction.tenderedAmount || transaction.totalAmount).toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between font-black text-slate-900">
+                      <span>Change Due:</span>
+                      <span className="text-emerald-700">₱{(transaction.changeAmount || 0).toFixed(2)}</span>
+                    </div>
+                  </>
+                )}
+
+                {(transaction.paymentMethod === 'E_WALLET' || transaction.paymentMethod === 'QR') && (
+                  <div className="flex justify-between font-extrabold text-sky-900 bg-sky-50 p-2 rounded-xl border border-sky-200">
+                    <span>PayMongo Ref #:</span>
+                    <span>{transaction.paymongoRef || 'QR PH'}</span>
+                  </div>
+                )}
+
+                {(transaction.paymentMethod === 'LISTAHAN_CREDIT' || transaction.paymentMethod === 'Credit') && (
+                  <div className="text-center font-extrabold text-purple-950 bg-purple-50 p-2.5 rounded-xl border border-purple-200">
+                    Logged to {transaction.customerName || 'Customer'}'s Listahan Account
+                  </div>
+                )}
               </>
-            )}
-
-            {transaction.paymentMethod === 'E_WALLET' && (
-              <div className="flex justify-between font-extrabold text-sky-900 bg-sky-50 p-2 rounded-xl border border-sky-200">
-                <span>PayMongo Ref #:</span>
-                <span>{transaction.paymongoRef}</span>
-              </div>
-            )}
-
-            {transaction.paymentMethod === 'LISTAHAN_CREDIT' && (
-              <div className="text-center font-extrabold text-purple-950 bg-purple-50 p-2.5 rounded-xl border border-purple-200">
-                Logged to {transaction.customerName}'s Listahan Account
-              </div>
             )}
           </div>
 

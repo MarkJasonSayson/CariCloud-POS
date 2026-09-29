@@ -183,7 +183,7 @@ export const EODModule: React.FC<EODModuleProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
                   Actual Physical Cash Counted (₱)
                 </label>
                 <input
@@ -191,7 +191,7 @@ export const EODModule: React.FC<EODModuleProps> = ({
                   step="1"
                   value={actualCashInBox}
                   onChange={(e) => setActualCashInBox(parseFloat(e.target.value) || 0)}
-                  className="w-full text-xl font-black text-emerald-800 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none focus:bg-white transition-all"
+                  className="w-full text-xl font-black text-emerald-800 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none focus:bg-white transition-all dark:bg-slate-800 dark:text-emerald-400 dark:border-slate-700 dark:placeholder-slate-400 dark:focus:bg-slate-800"
                 />
               </div>
             </div>
@@ -238,13 +238,13 @@ export const EODModule: React.FC<EODModuleProps> = ({
             {/* Dish selector & Qty */}
             <div className="flex flex-col sm:flex-row items-end gap-3">
               <div className="flex-1 w-full">
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
                   Unsold Dish
                 </label>
                 <select
                   value={selectedDishId}
                   onChange={(e) => setSelectedDishId(e.target.value)}
-                  className="w-full px-4 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-orange-500 font-medium text-slate-900"
+                  className="w-full px-4 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-orange-500 font-medium text-slate-900 dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400"
                 >
                   <option value="">-- Choose Unsold Dish --</option>
                   {menuItems.map((m) => (
@@ -256,7 +256,7 @@ export const EODModule: React.FC<EODModuleProps> = ({
               </div>
 
               <div className="w-full sm:w-28">
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
                   Qty Unsold
                 </label>
                 <input
@@ -264,7 +264,7 @@ export const EODModule: React.FC<EODModuleProps> = ({
                   min="1"
                   value={unsoldQty}
                   onChange={(e) => setUnsoldQty(parseInt(e.target.value) || 1)}
-                  className="w-full px-4 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-orange-500 font-bold text-slate-900"
+                  className="w-full px-4 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-orange-500 font-bold text-slate-900 dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400"
                 />
               </div>
 
@@ -311,7 +311,7 @@ export const EODModule: React.FC<EODModuleProps> = ({
 
           {/* Audit Notes */}
           <div className="bg-white rounded-3xl p-6 shadow-airmee border border-slate-100 space-y-2">
-            <label className="block text-xs font-bold text-slate-700 mb-1">
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
               End-of-Day Audit Remarks / Notes
             </label>
             <textarea
@@ -319,7 +319,7 @@ export const EODModule: React.FC<EODModuleProps> = ({
               placeholder="e.g. Lunch rush peak performance. Minor leftover Pinakbet recorded."
               value={auditNotes}
               onChange={(e) => setAuditNotes(e.target.value)}
-              className="w-full px-4 py-3 text-xs bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:bg-white transition-all text-slate-900 font-medium"
+              className="w-full px-4 py-3 text-xs bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:bg-white transition-all text-slate-900 font-medium dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400 dark:focus:bg-slate-800"
             />
           </div>
 

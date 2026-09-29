@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   BookOpen, 
   Plus, 
@@ -12,6 +12,7 @@ import {
   MapPin,
   ShieldAlert,
   Edit,
+  Trash2,
   Eye,
   Lock,
   Filter,
@@ -28,6 +29,7 @@ interface ListahanModuleProps {
   onRecordPayment: (customerId: string, amount: number, receivedBy: string, notes?: string) => void;
   receivedBy: string;
   currentUserRole?: Role;
+  tenantId?: string | number;
 }
 
 export const ListahanModule: React.FC<ListahanModuleProps> = ({
@@ -37,8 +39,42 @@ export const ListahanModule: React.FC<ListahanModuleProps> = ({
   onRecordPayment,
   receivedBy,
   currentUserRole = 'ADMIN',
+  tenantId,
 }) => {
   const isOwner = currentUserRole === 'ADMIN';
+  const [sukiList, setSukiList] = useState<CustomerCredit[]>(customers);
+
+  // Reusable sync function to fetch the ground truth from MySQL
+  const fetchFreshLedger = async () => {
+    try {
+      let targetId = tenantId;
+      if (!targetId) {
+        try {
+          const saved = localStorage.getItem('caricloud_user');
+          if (saved) {
+            const u = JSON.parse(saved);
+            targetId = u.role === 'CASHIER' ? u.parentOwnerId : u.id;
+          }
+        } catch (_) {}
+      }
+      if (!targetId) return;
+
+      const res = await fetch(`/api/suki?tenantId=${targetId}`);
+      if (res.ok) {
+        const freshData = await res.json();
+        if (Array.isArray(freshData)) {
+          setSukiList(freshData); // Update the state feeding the UI
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch fresh suki ledger", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchFreshLedger();
+  }, [tenantId]);
+
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerCredit | null>(null);
 
@@ -63,12 +99,12 @@ export const ListahanModule: React.FC<ListahanModuleProps> = ({
   const [payAmount, setPayAmount] = useState<number>(100);
   const [payNotes, setPayNotes] = useState('');
 
-  const filteredCustomers = customers.filter((c) =>
+  const filteredCustomers = sukiList.filter((c) =>
     c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     c.contact.includes(searchQuery)
   );
 
-  const totalOutstandingUtang = customers.reduce((sum, c) => sum + c.currentDebt, 0);
+  const totalOutstandingUtang = sukiList.reduce((sum, c) => sum + c.currentDebt, 0);
 
   // Filtered Debt Payments for History Section
   const filteredDebtPayments = debtPayments.filter((p) => {
@@ -108,7 +144,7 @@ export const ListahanModule: React.FC<ListahanModuleProps> = ({
     setIsCustomerModalOpen(true);
   };
 
-  const handleSaveCustomerForm = (e: React.FormEvent) => {
+  const handleSaveCustomerForm = async (e: React.FormEvent) => {
     e.preventDefault();
     if (currentUserRole !== 'ADMIN') {
       alert('Access Denied: Only Admins can save or modify credit accounts.');
@@ -119,22 +155,45 @@ export const ListahanModule: React.FC<ListahanModuleProps> = ({
       return;
     }
 
-    const target = editingCustId ? customers.find((c) => c.id === editingCustId) : null;
+    let activeTenantId = tenantId;
+    if (!activeTenantId) {
+      try {
+        const saved = localStorage.getItem('caricloud_user');
+        if (saved) {
+          const u = JSON.parse(saved);
+          activeTenantId = u.role === 'CASHIER' ? u.parentOwnerId : u.id;
+        }
+      } catch (_) {}
+    }
 
-    const newCustomer: CustomerCredit = {
-      id: editingCustId || 'c-' + Date.now(),
-      name: custName.trim(),
-      contact: custContact.trim(),
-      address: custAddress.trim() || undefined,
-      creditLimit: custLimit,
-      currentDebt: target ? target.currentDebt : 0,
-      isApproved: custApproved,
-      notes: custNotes.trim() || undefined,
-      updatedAt: new Date().toISOString(),
-    };
+    const target = editingCustId ? sukiList.find((c) => c.id === editingCustId) : null;
 
-    onSaveCustomer(newCustomer);
-    setIsCustomerModalOpen(false);
+    try {
+      const res = await fetch('/api/suki', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantId: activeTenantId,
+          name: custName.trim(),
+          credit_limit: custLimit,
+          balance: target ? target.currentDebt : 0,
+          contact: custContact.trim(),
+          address: custAddress.trim(),
+          notes: custNotes.trim(),
+        }),
+      });
+
+      if (res.ok) {
+        await fetchFreshLedger(); // Guarantees stale closures do not resurrect deleted items
+        setIsCustomerModalOpen(false);
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        alert(errJson.error || 'Failed to save Suki account to database.');
+      }
+    } catch (err) {
+      console.error('Error saving suki account:', err);
+      alert('Failed to save Suki account. Please try again.');
+    }
   };
 
   const handleOpenPaymentModal = (c: CustomerCredit) => {
@@ -153,8 +212,32 @@ export const ListahanModule: React.FC<ListahanModuleProps> = ({
     }
 
     onRecordPayment(selectedCustomer.id, payAmount, receivedBy, payNotes);
+    setSukiList((prev) =>
+      prev.map((c) =>
+        c.id === selectedCustomer.id
+          ? { ...c, currentDebt: Math.max(0, c.currentDebt - payAmount), updatedAt: new Date().toISOString() }
+          : c
+      )
+    );
     setIsPaymentModalOpen(false);
     alert(`Payment of ₱${payAmount.toFixed(2)} recorded for ${selectedCustomer.name}!`);
+  };
+
+  const handleDeleteSuki = async (id: string) => {
+    if (!window.confirm("Are you sure you want to delete this authorized Suki? Past receipts will remain unaffected.")) return;
+
+    try {
+      const res = await fetch(`/api/suki/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        await fetchFreshLedger(); // Force UI to pull the truth from MySQL
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        alert(errJson.error || 'Failed to delete Suki from database.');
+        await fetchFreshLedger();
+      }
+    } catch (err) {
+      console.error("Failed to delete suki", err);
+    }
   };
 
   return (
@@ -220,7 +303,7 @@ export const ListahanModule: React.FC<ListahanModuleProps> = ({
       </div>
 
       {/* Search Bar */}
-      <div className="bg-white rounded-3xl shadow-airmee border border-slate-200/80 p-4">
+      <div className="bg-white dark:bg-slate-900 dark:text-white rounded-3xl shadow-airmee border border-slate-200/80 dark:border-slate-800 p-4">
         <div className="relative max-w-md">
           <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
           <input
@@ -228,7 +311,7 @@ export const ListahanModule: React.FC<ListahanModuleProps> = ({
             placeholder="Search Suki by name or phone number..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-50/70 border border-slate-200/80 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none text-slate-900 font-medium"
+            className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-50/70 border border-slate-200/80 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none text-slate-900 font-medium dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400"
           />
         </div>
       </div>
@@ -264,13 +347,25 @@ export const ListahanModule: React.FC<ListahanModuleProps> = ({
                   </div>
 
                   {isOwner && (
-                    <button
-                      onClick={() => handleOpenEditCustomer(c)}
-                      className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-full transition cursor-pointer"
-                      title="Edit Customer Details"
-                    >
-                      <Edit className="w-4 h-4" />
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {/* Existing Edit Icon */}
+                      <button
+                        onClick={() => handleOpenEditCustomer(c)}
+                        className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-full transition cursor-pointer"
+                        title="Edit Customer Details"
+                      >
+                        <Edit className="w-4 h-4" />
+                      </button>
+
+                      {/* New Delete Icon */}
+                      <button 
+                        onClick={() => handleDeleteSuki(c.id)} 
+                        className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-full transition cursor-pointer"
+                        title="Delete Suki Account"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   )}
                 </div>
 
@@ -358,10 +453,10 @@ export const ListahanModule: React.FC<ListahanModuleProps> = ({
             <select
               value={historyCustomerFilter}
               onChange={(e) => setHistoryCustomerFilter(e.target.value)}
-              className="bg-slate-50 border border-slate-200/80 text-slate-800 text-xs font-bold px-3.5 py-2 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none cursor-pointer"
+              className="bg-slate-50 border border-slate-200/80 text-slate-800 text-xs font-bold px-3.5 py-2 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none cursor-pointer dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400"
             >
               <option value="ALL">All Suki Accounts ({debtPayments.length} Payments)</option>
-              {customers.map((c) => (
+              {sukiList.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
                 </option>
@@ -451,10 +546,10 @@ export const ListahanModule: React.FC<ListahanModuleProps> = ({
       {/* INDIVIDUAL CUSTOMER HISTORY MODAL */}
       {customerHistoryModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl shadow-airmee-hover max-w-lg w-full p-6 space-y-5 border border-slate-100 animate-fadeIn">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+          <div className="bg-white dark:bg-slate-900 dark:text-white rounded-3xl shadow-airmee-hover max-w-lg w-full p-6 space-y-5 border border-slate-100 dark:border-slate-800 animate-fadeIn">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
               <div>
-                <h3 className="font-extrabold text-base text-slate-900 flex items-center gap-2">
+                <h3 className="font-extrabold text-base text-slate-900 dark:text-white flex items-center gap-2">
                   <History className="w-5 h-5 text-orange-600" />
                   Payment History: {customerHistoryModal.name}
                 </h3>
@@ -512,15 +607,15 @@ export const ListahanModule: React.FC<ListahanModuleProps> = ({
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
           <form
             onSubmit={handleSaveCustomerForm}
-            className="bg-white rounded-3xl shadow-airmee-hover max-w-md w-full p-6 space-y-5 border border-slate-100 animate-fadeIn"
+            className="bg-white dark:bg-slate-900 dark:text-white rounded-3xl shadow-airmee-hover max-w-md w-full p-6 space-y-5 border border-slate-100 dark:border-slate-800 animate-fadeIn"
           >
-            <h3 className="font-extrabold text-base text-slate-900 border-b border-slate-100 pb-3">
+            <h3 className="font-extrabold text-base text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-3">
               {editingCustId ? 'Edit Suki Account' : 'Register New Suki Customer'}
             </h3>
 
             <div className="space-y-3.5">
               <div>
-                <label className="block text-xs font-bold text-slate-800 mb-1">
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
                   Customer Name *
                 </label>
                 <input
@@ -529,12 +624,12 @@ export const ListahanModule: React.FC<ListahanModuleProps> = ({
                   placeholder="e.g. Kapitan Mang Berting"
                   value={custName}
                   onChange={(e) => setCustName(e.target.value)}
-                  className="w-full px-4 py-2.5 text-sm border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none"
+                  className="w-full px-4 py-2.5 text-sm border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-800 mb-1">
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
                   Contact Number
                 </label>
                 <input
@@ -542,12 +637,12 @@ export const ListahanModule: React.FC<ListahanModuleProps> = ({
                   placeholder="e.g. 0917-555-1234"
                   value={custContact}
                   onChange={(e) => setCustContact(e.target.value)}
-                  className="w-full px-4 py-2.5 text-sm border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none"
+                  className="w-full px-4 py-2.5 text-sm border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-800 mb-1">
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
                   Barangay / Address
                 </label>
                 <input
@@ -555,13 +650,13 @@ export const ListahanModule: React.FC<ListahanModuleProps> = ({
                   placeholder="e.g. Brgy. San Roque, Marikina"
                   value={custAddress}
                   onChange={(e) => setCustAddress(e.target.value)}
-                  className="w-full px-4 py-2.5 text-sm border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none"
+                  className="w-full px-4 py-2.5 text-sm border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-800 mb-1">
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
                     Credit Limit (₱)
                   </label>
                   <input
@@ -570,17 +665,17 @@ export const ListahanModule: React.FC<ListahanModuleProps> = ({
                     step="100"
                     value={custLimit}
                     onChange={(e) => setCustLimit(parseFloat(e.target.value) || 0)}
-                    className="w-full px-4 py-2.5 text-sm font-bold border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none"
+                    className="w-full px-4 py-2.5 text-sm font-bold border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400"
                   />
                 </div>
 
                 <div className="flex items-center pt-5">
-                  <label className="flex items-center space-x-2 text-xs font-bold text-slate-800 cursor-pointer">
+                  <label className="flex items-center space-x-2 text-xs font-bold text-slate-800 dark:text-slate-200 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={custApproved}
                       onChange={(e) => setCustApproved(e.target.checked)}
-                      className="w-4 h-4 text-orange-600 rounded-md focus:ring-orange-500"
+                      className="w-4 h-4 text-orange-600 rounded-md focus:ring-orange-500 dark:bg-slate-800 dark:border-slate-700"
                     />
                     <span>Approved for Credit</span>
                   </label>
@@ -588,7 +683,7 @@ export const ListahanModule: React.FC<ListahanModuleProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-800 mb-1">
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
                   Operational Notes
                 </label>
                 <textarea
@@ -596,16 +691,16 @@ export const ListahanModule: React.FC<ListahanModuleProps> = ({
                   placeholder="e.g. Barangay official. Pays every Friday."
                   value={custNotes}
                   onChange={(e) => setCustNotes(e.target.value)}
-                  className="w-full px-4 py-2.5 text-sm border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none"
+                  className="w-full px-4 py-2.5 text-sm border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400"
                 />
               </div>
             </div>
 
-            <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100">
+            <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100 dark:border-slate-800">
               <button
                 type="button"
                 onClick={() => setIsCustomerModalOpen(false)}
-                className="px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-800 cursor-pointer"
+                className="px-4 py-2 text-xs font-bold text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
               >
                 Cancel
               </button>
@@ -625,22 +720,22 @@ export const ListahanModule: React.FC<ListahanModuleProps> = ({
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
           <form
             onSubmit={handleExecutePayment}
-            className="bg-white rounded-3xl shadow-airmee-hover max-w-md w-full p-6 space-y-5 border border-slate-100 animate-fadeIn"
+            className="bg-white dark:bg-slate-900 dark:text-white rounded-3xl shadow-airmee-hover max-w-md w-full p-6 space-y-5 border border-slate-100 dark:border-slate-800 animate-fadeIn"
           >
-            <h3 className="font-extrabold text-base text-slate-900 border-b border-slate-100 pb-3">
+            <h3 className="font-extrabold text-base text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-3">
               Record Cash Repayment - {selectedCustomer.name}
             </h3>
 
-            <div className="bg-slate-50/80 p-3.5 rounded-2xl border border-slate-200/60 text-xs space-y-1">
+            <div className="bg-slate-50/80 dark:bg-slate-800/80 p-3.5 rounded-2xl border border-slate-200/60 dark:border-slate-700 text-xs space-y-1">
               <div className="flex justify-between">
-                <span className="font-medium text-slate-500">Current Debt Balance:</span>
-                <span className="font-black text-slate-900">₱{selectedCustomer.currentDebt.toFixed(2)}</span>
+                <span className="font-medium text-slate-500 dark:text-slate-400">Current Debt Balance:</span>
+                <span className="font-black text-slate-900 dark:text-white">₱{selectedCustomer.currentDebt.toFixed(2)}</span>
               </div>
             </div>
 
             <div className="space-y-3.5">
               <div>
-                <label className="block text-xs font-bold text-slate-800 mb-1">
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
                   Cash Amount Received (₱) *
                 </label>
                 <input
@@ -650,28 +745,28 @@ export const ListahanModule: React.FC<ListahanModuleProps> = ({
                   required
                   value={payAmount}
                   onChange={(e) => setPayAmount(parseFloat(e.target.value) || 0)}
-                  className="w-full text-xl font-black text-emerald-700 px-4 py-3 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  className="w-full text-xl font-black text-emerald-700 dark:text-emerald-400 px-4 py-3 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 focus:outline-none dark:bg-slate-800 dark:border-slate-700 dark:placeholder-slate-400"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-800 mb-1">
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
                   Payment Notes / Receipt Ref
                 </label>
                 <input
                   type="text"
                   value={payNotes}
                   onChange={(e) => setPayNotes(e.target.value)}
-                  className="w-full px-4 py-2.5 text-sm border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none"
+                  className="w-full px-4 py-2.5 text-sm border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400"
                 />
               </div>
             </div>
 
-            <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100">
+            <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100 dark:border-slate-800">
               <button
                 type="button"
                 onClick={() => setIsPaymentModalOpen(false)}
-                className="px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-800 cursor-pointer"
+                className="px-4 py-2 text-xs font-bold text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
               >
                 Cancel
               </button>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   MenuItem,
   CartItem,
@@ -9,7 +10,8 @@ import {
   UserProfile,
   SelectedModifier,
   SubscriptionTierLevel,
-  DebtPaymentRecord
+  DebtPaymentRecord,
+  SubOrder
 } from './types';
 import { Header } from './components/Header';
 import { LandingPage } from './components/LandingPage';
@@ -27,12 +29,37 @@ import { SettingsModule } from './components/SettingsModule';
 import { Lock, ShieldAlert, LogOut } from 'lucide-react';
 
 export default function App() {
+  const location = useLocation();
+
   // --- APPLICATION STATE ---
-  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
-  const [currentView, setCurrentView] = useState<'landing' | 'login' | 'dashboard'>('landing');
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => {
+    try {
+      return Boolean(localStorage.getItem('caricloud_user'));
+    } catch {
+      return false;
+    }
+  });
+  const [currentView, setCurrentView] = useState<'landing' | 'login' | 'dashboard'>(() => {
+    try {
+      return localStorage.getItem('caricloud_user') ? 'dashboard' : 'landing';
+    } catch {
+      return 'landing';
+    }
+  });
   const [activeTab, setActiveTab] = useState<string>('pos');
   const [isOnline, setIsOnline] = useState<boolean>(true);
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
+
+  // Reset auth and switch to landing page upon account deletion
+  useEffect(() => {
+    const locState = location.state as { accountDeleted?: boolean } | null;
+    if (locState?.accountDeleted) {
+      setIsLoggedIn(false);
+      setCurrentUser(null);
+      localStorage.removeItem('caricloud_user');
+      setCurrentView('landing');
+    }
+  }, [location.state]);
 
   // Store Configuration & Settings (Persisted)
   const [settings, setSettings] = useState<StoreSettings>(() => {
@@ -53,8 +80,15 @@ export default function App() {
     localStorage.setItem('caricloud_settings', JSON.stringify(settings));
   }, [settings]);
 
-  // User Profile State
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  // User Profile State (Restored from localStorage on page refresh)
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
+    try {
+      const saved = localStorage.getItem('caricloud_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
 
   // Limbo Access Guard (Non-ADMIN without parentOwnerId)
   const isLimbo = Boolean(
@@ -66,6 +100,8 @@ export default function App() {
   // Data Collections (Initialized with safe local state)
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [customers, setCustomers] = useState<CustomerCredit[]>([]);
+  const sukiList = customers;
+  const setSukiList = setCustomers;
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [eodLogs, setEodLogs] = useState<EODRecord[]>([]);
   const [debtPayments, setDebtPayments] = useState<DebtPaymentRecord[]>([]);
@@ -83,6 +119,7 @@ export default function App() {
 
   // Cart & POS State
   const [cart, setCart] = useState<CartItem[]>([]);
+  const [subOrders, setSubOrders] = useState<SubOrder[]>([]);
   const [isSeniorOrPwd, setIsSeniorOrPwd] = useState<boolean>(false);
   const [seniorPwdId, setSeniorPwdId] = useState<string>('');
   const [seniorPwdName, setSeniorPwdName] = useState<string>('');
@@ -91,10 +128,63 @@ export default function App() {
   const [isCheckoutOpen, setIsCheckoutOpen] = useState<boolean>(false);
   const [completedTxForReceipt, setCompletedTxForReceipt] = useState<Transaction | null>(null);
 
+  // Limbo Screen Link Account State
+  const [tokenInput, setTokenInput] = useState<string>('');
+  const [isLinking, setIsLinking] = useState<boolean>(false);
+  const [linkError, setLinkError] = useState<string>('');
+
+  const handleLinkAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tokenInput.trim()) {
+      setLinkError('Please paste your invitation token.');
+      return;
+    }
+
+    if (!currentUser) return;
+
+    setIsLinking(true);
+    setLinkError('');
+
+    try {
+      const res = await fetch('/api/invitations/link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: currentUser.email || currentUser.username,
+          token: tokenInput.trim(),
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setLinkError(data.error || 'Failed to link account. Please verify token.');
+        setIsLinking(false);
+        return;
+      }
+
+      alert('Account successfully linked!');
+
+      const updatedUser: UserProfile = {
+        ...currentUser,
+        parentOwnerId: data.tenantId || 1,
+        invitationStatus: 'ACCEPTED',
+      };
+      setCurrentUser(updatedUser);
+      localStorage.setItem('caricloud_user', JSON.stringify(updatedUser));
+      setActiveTab('pos');
+    } catch (err: any) {
+      console.error('Error linking account:', err);
+      setLinkError('Network error while linking account. Please try again.');
+    } finally {
+      setIsLinking(false);
+    }
+  };
+
   // Helper functions for Menu & Transactions sync with MySQL
   const fetchMenu = async (tenantId: string | number) => {
     try {
-      const res = await fetch(`/api/menu?userId=${tenantId}`);
+      const res = await fetch(`/api/products?tenantId=${tenantId}`);
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data)) {
@@ -108,7 +198,7 @@ export default function App() {
 
   const fetchTransactions = async (tenantId: string | number) => {
     try {
-      const res = await fetch(`/api/transactions?userId=${tenantId}`);
+      const res = await fetch(`/api/transactions?tenantId=${tenantId}`);
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data)) {
@@ -120,14 +210,81 @@ export default function App() {
     }
   };
 
-  // Load Menu and Transaction Data from Express Backend after login (Multi-tenant secured)
+  // Strict Data Hydration Cycle upon login / currentUser change
   useEffect(() => {
-    if (currentUser && !isLimbo) {
-      const tenantId = currentUser.role === 'ADMIN' ? currentUser.id : currentUser.parentOwnerId || 1;
-      fetchMenu(tenantId);
-      fetchTransactions(tenantId);
+    if (!currentUser) return;
+
+    const activeTenantId = currentUser.role === 'CASHIER' ? currentUser.parentOwnerId : currentUser.id;
+    if (!activeTenantId) return;
+
+    // 1. Fetch products for active tenant and completely replace any initialData defaults
+    fetch(`/api/products?tenantId=${activeTenantId}`)
+      .then((res) => {
+        if (res.ok) return res.json();
+        return [];
+      })
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setMenuItems(data);
+        }
+      })
+      .catch((err) => {
+        console.error('Error hydrating products from database:', err);
+      });
+
+    // 2. IF currentUser.role === 'ADMIN', fetch staff accounts for active tenant
+    if (currentUser.role === 'ADMIN') {
+      fetch(`/api/staff?tenantId=${activeTenantId}`)
+        .then((res) => {
+          if (res.ok) return res.json();
+          return [];
+        })
+        .then((data) => {
+          if (Array.isArray(data)) {
+            setStaffAccounts(data);
+          }
+        })
+        .catch((err) => {
+          console.error('Error hydrating staff accounts from database:', err);
+        });
     }
-  }, [currentUser, isLimbo]);
+
+    // 3. Hydrate Store Settings (including operationalMode) from database
+    fetch(`/api/settings?tenantId=${activeTenantId}`)
+      .then((res) => {
+        if (res.ok) return res.json();
+        return null;
+      })
+      .then((data) => {
+        if (data && typeof data === 'object') {
+          setSettings((prev) => ({
+            ...prev,
+            ...data,
+          }));
+        }
+      })
+      .catch((err) => {
+        console.error('Error hydrating store settings from database:', err);
+      });
+
+    // 4. Hydrate Suki / Customer Ledger from database
+    fetch(`/api/suki?tenantId=${activeTenantId}`)
+      .then((res) => {
+        if (res.ok) return res.json();
+        return [];
+      })
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setSukiList(data);
+        }
+      })
+      .catch((err) => {
+        console.error('Error hydrating suki ledger from database:', err);
+      });
+
+    // Hydrate transaction receipts history
+    fetchTransactions(activeTenantId);
+  }, [currentUser]);
 
   // Network Online Status Listener
   useEffect(() => {
@@ -253,22 +410,22 @@ export default function App() {
       prev.map((item) => (item.id === itemId ? { ...item, isSoldOut } : item))
     );
 
-    const tenantId = currentUser?.role === 'ADMIN' ? currentUser.id : currentUser?.parentOwnerId || 1;
+    const tenantId = currentUser?.role === 'CASHIER' ? currentUser.parentOwnerId : currentUser?.id;
     try {
       await fetch(`/api/menu/${itemId}/soldout`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: tenantId, isSoldOut }),
       });
-      fetchMenu(tenantId);
+      if (tenantId) fetchMenu(tenantId);
     } catch (err) {
       console.error('Failed to persist sold-out status:', err);
-      fetchMenu(tenantId);
+      if (tenantId) fetchMenu(tenantId);
     }
   };
 
   const handleSaveMenuItem = async (item: MenuItem) => {
-    const tenantId = currentUser?.role === 'ADMIN' ? currentUser.id : currentUser?.parentOwnerId || 1;
+    const tenantId = currentUser?.role === 'CASHIER' ? currentUser.parentOwnerId : currentUser?.id;
     const isEditing = menuItems.some((i) => i.id === item.id);
 
     if (isEditing) {
@@ -278,23 +435,33 @@ export default function App() {
         const res = await fetch(`/api/menu/${item.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId: tenantId, ...item }),
+          body: JSON.stringify({
+            owner_id: currentUser?.id || tenantId,
+            tenantId: currentUser?.id || tenantId,
+            userId: currentUser?.id || tenantId,
+            ...item
+          }),
         });
-        if (res.ok) {
+        if (res.ok && tenantId) {
           fetchMenu(tenantId);
         }
       } catch (err) {
         console.error('Failed to update menu item in MySQL:', err);
-        fetchMenu(tenantId);
+        if (tenantId) fetchMenu(tenantId);
       }
     } else {
       // Create new menu item - Optimistically add to state immediately
       setMenuItems((prev) => [item, ...prev]);
       try {
-        const res = await fetch('/api/menu', {
+        const res = await fetch('/api/products', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId: tenantId, ...item }),
+          body: JSON.stringify({
+            owner_id: currentUser?.id || tenantId,
+            tenantId: currentUser?.id || tenantId,
+            userId: currentUser?.id || tenantId,
+            ...item
+          }),
         });
         if (res.ok) {
           const data = await res.json();
@@ -302,11 +469,11 @@ export default function App() {
           setMenuItems((prev) =>
             prev.map((i) => (i.id === item.id ? createdItem : i))
           );
-          fetchMenu(tenantId);
+          if (tenantId) fetchMenu(tenantId);
         }
       } catch (err) {
         console.error('Failed to create menu item in MySQL:', err);
-        fetchMenu(tenantId);
+        if (tenantId) fetchMenu(tenantId);
       }
     }
   };
@@ -315,23 +482,29 @@ export default function App() {
     // Optimistic deletion
     setMenuItems((prev) => prev.filter((i) => i.id !== itemId));
 
-    const tenantId = currentUser?.role === 'ADMIN' ? currentUser.id : currentUser?.parentOwnerId || 1;
+    const tenantId = currentUser?.role === 'CASHIER' ? currentUser.parentOwnerId : currentUser?.id;
     try {
       const res = await fetch(`/api/menu/${itemId}?userId=${tenantId}`, {
         method: 'DELETE',
       });
-      if (res.ok) {
+      if (res.ok && tenantId) {
         fetchMenu(tenantId);
       }
     } catch (err) {
       console.error('Failed to delete menu item in MySQL:', err);
-      fetchMenu(tenantId);
+      if (tenantId) fetchMenu(tenantId);
     }
   };
 
   // --- CUSTOMER & LISTAHAN HANDLERS ---
   const handleSaveCustomer = (customer: CustomerCredit) => {
-    setCustomers((prev) => [...prev, customer]);
+    setCustomers((prev) => {
+      const exists = prev.some((c) => c.id === customer.id);
+      if (exists) {
+        return prev.map((c) => (c.id === customer.id ? customer : c));
+      }
+      return [customer, ...prev];
+    });
   };
 
   const handleRecordPayment = (customerId: string, amount: number, receivedBy: string, notes?: string) => {
@@ -361,10 +534,19 @@ export default function App() {
   const handleCompleteTransaction = (tx: Transaction) => {
     setTransactions((prev) => [tx, ...prev]);
     setCart([]);
+    setSubOrders([]);
     setIsCheckoutOpen(false);
     setCompletedTxForReceipt(tx);
 
-    const tenantId = currentUser?.role === 'ADMIN' ? currentUser.id : currentUser?.parentOwnerId || 1;
+    const tenantId = currentUser?.role === 'CASHIER' ? currentUser.parentOwnerId : currentUser?.id;
+
+    // Grouped sub-orders are already persisted to backend by handleCheckout
+    if (tx.subOrders && tx.subOrders.length > 0) {
+      if (tenantId) {
+        fetchTransactions(tenantId);
+      }
+      return;
+    }
 
     if (!isOnline) {
       setPendingSyncCount((prev) => prev + 1);
@@ -406,14 +588,29 @@ export default function App() {
   };
 
   // --- STORE SETTINGS HANDLER ---
-  const handleSaveSettings = (newSettings: StoreSettings) => {
+  const handleSaveSettings = async (newSettings: StoreSettings) => {
     setSettings(newSettings);
+    try {
+      const activeTenantId = currentUser?.role === 'CASHIER' ? currentUser.parentOwnerId : currentUser?.id;
+      if (activeTenantId) {
+        await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tenantId: activeTenantId,
+            settings: newSettings,
+          }),
+        });
+      }
+    } catch (err) {
+      console.error('Failed to persist store settings to database:', err);
+    }
   };
 
   // --- SUBSCRIPTION TIER SELECTOR ---
   const handleSelectTier = (tier: SubscriptionTierLevel) => {
-    const updated = { ...settings, activeTier: tier };
-    setSettings(updated);
+    const updated: StoreSettings = { ...settings, activeTier: tier };
+    handleSaveSettings(updated);
     alert(`Switched active SaaS Subscription to Tier ${tier}!`);
   };
 
@@ -427,14 +624,22 @@ export default function App() {
     setStaffAccounts((prev) => [...prev, user]);
   };
 
-  const handleDeleteStaffAccount = (userId: string) => {
-    setStaffAccounts((prev) => prev.filter((u) => u.id !== userId));
+  const handleDeleteStaffAccount = async (userId: string) => {
+    try {
+      const res = await fetch(`/api/staff/${userId}`, { method: 'DELETE' });
+      if (res.ok) {
+        setStaffAccounts((prev) => prev.filter((u) => u.id !== userId));
+      }
+    } catch (err) {
+      console.error('Failed to unlink staff account from backend:', err);
+    }
   };
 
   // --- AUTH / USER MANAGEMENT ---
   const handleLoginSuccess = (user: UserProfile) => {
     setCurrentUser(user);
     setIsLoggedIn(true);
+    localStorage.setItem('caricloud_user', JSON.stringify(user));
     const isUnassigned = user.role !== 'ADMIN' && (user.parentOwnerId === null || user.parentOwnerId === undefined);
     if (isUnassigned) {
       setActiveTab('limbo');
@@ -446,6 +651,8 @@ export default function App() {
   const handleSignOut = () => {
     setIsLoggedIn(false);
     setCurrentUser(null);
+    localStorage.removeItem('caricloud_user');
+    setCurrentView('landing');
   };
 
   const handleSwitchUserRole = () => {
@@ -581,6 +788,37 @@ export default function App() {
             </div>
           </div>
 
+          {/* Visual Divider & Invitation Token Linking Section */}
+          <div className="pt-4 border-t border-slate-700/80 space-y-3 w-full text-left">
+            <label className="block text-xs font-bold text-slate-200">
+              If you've been invited to a store POS, paste the token here:
+            </label>
+            <form onSubmit={handleLinkAccount} className="space-y-2">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={tokenInput}
+                  onChange={(e) => setTokenInput(e.target.value)}
+                  placeholder="e.g. inv_xxxxxxxxxxxx"
+                  disabled={isLinking}
+                  className="flex-1 px-3 py-2 text-xs font-mono bg-slate-900/80 border border-slate-600 rounded-xl text-white placeholder-slate-500 focus:ring-2 focus:ring-orange-500 focus:outline-none dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400"
+                />
+                <button
+                  type="submit"
+                  disabled={isLinking}
+                  className="px-4 py-2 bg-orange-600 hover:bg-orange-700 active:scale-95 text-white font-extrabold text-xs rounded-xl shadow-xs transition disabled:opacity-50 cursor-pointer whitespace-nowrap"
+                >
+                  {isLinking ? 'Linking...' : 'Link Account'}
+                </button>
+              </div>
+              {linkError && (
+                <p className="text-[11px] font-bold text-rose-400">
+                  ⚠️ {linkError}
+                </p>
+              )}
+            </form>
+          </div>
+
           <div className="pt-2">
             <button
               onClick={handleSignOut}
@@ -599,8 +837,84 @@ export default function App() {
     );
   }
 
+  // Single Operator Mode Lockout Guard for Staff/Cashier accounts
+  if (currentUser?.role === 'CASHIER' && settings.operationalMode === 'SINGLE_OPERATOR') {
+    return (
+      <div className="min-h-screen bg-slate-900 text-white flex flex-col justify-between p-6 font-sans">
+        <header className="max-w-4xl mx-auto w-full flex items-center justify-between pb-6 border-b border-slate-800">
+          <div className="flex items-center space-x-3">
+            <div className="w-10 h-10 rounded-2xl bg-orange-600 flex items-center justify-center text-white font-black text-xl shadow-airmee-orange">
+              C
+            </div>
+            <div>
+              <h1 className="text-lg font-black text-white">CariCloud POS</h1>
+              <p className="text-xs text-slate-400 font-medium">Single Operator Lockout</p>
+            </div>
+          </div>
+          <button
+            onClick={handleSignOut}
+            className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-extrabold text-xs rounded-full border border-slate-700 cursor-pointer flex items-center gap-1.5 transition"
+          >
+            <LogOut className="w-3.5 h-3.5 text-orange-400" />
+            Sign Out ({currentUser.name})
+          </button>
+        </header>
+
+        <main className="max-w-md mx-auto w-full my-auto text-center space-y-6 bg-slate-800/90 border border-slate-700/80 p-8 rounded-3xl shadow-2xl">
+          <div className="w-16 h-16 rounded-3xl bg-rose-500/10 border border-rose-500/20 text-rose-500 flex items-center justify-center mx-auto shadow-inner">
+            <Lock className="w-8 h-8" />
+          </div>
+
+          <div className="space-y-3">
+            <span className="bg-rose-500/10 text-rose-400 border border-rose-500/20 text-[10px] font-extrabold px-3 py-1 rounded-full uppercase tracking-wider inline-flex items-center gap-1">
+              <ShieldAlert className="w-3 h-3" />
+              Single Operator Mode Active
+            </span>
+            <h2 className="text-2xl font-black text-white tracking-tight">
+              Account Locked Out of POS
+            </h2>
+            <p className="text-sm text-slate-300 leading-relaxed font-medium">
+              The Store Owner has enabled Single Operator Mode. Staff access to this store's POS is currently locked.
+            </p>
+          </div>
+
+          <div className="bg-slate-900/60 border border-slate-700/60 rounded-2xl p-4 w-full text-left space-y-2 text-xs">
+            <div className="flex justify-between items-center text-slate-400">
+              <span>Employee:</span>
+              <span className="font-bold text-slate-200">{currentUser.name}</span>
+            </div>
+            <div className="flex justify-between items-center text-slate-400">
+              <span>Role:</span>
+              <span className="font-bold text-amber-400">{currentUser.role}</span>
+            </div>
+            <div className="flex justify-between items-center text-slate-400">
+              <span>Operational Mode:</span>
+              <span className="font-mono text-rose-400 font-bold bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20">
+                SINGLE OPERATOR
+              </span>
+            </div>
+          </div>
+
+          <div className="pt-2">
+            <button
+              onClick={handleSignOut}
+              className="w-full py-3 bg-orange-600 hover:bg-orange-700 text-white text-xs font-extrabold rounded-full shadow-airmee-orange transition cursor-pointer flex items-center justify-center gap-2"
+            >
+              <LogOut className="w-4 h-4" />
+              Return to Login / Sign Out
+            </button>
+          </div>
+        </main>
+
+        <footer className="max-w-4xl mx-auto w-full text-center text-xs text-slate-500 pt-6 border-t border-slate-800 font-medium">
+          CariCloud POS System • Single Operator Mode Protection
+        </footer>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col selection:bg-orange-600 selection:text-white">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans flex flex-col selection:bg-orange-600 selection:text-white">
 
       {/* Top Header & Navigation */}
       <Header
@@ -628,7 +942,14 @@ export default function App() {
             onToggleSeniorPwd={handleToggleSeniorPwd}
             seniorPwdId={seniorPwdId}
             seniorPwdName={seniorPwdName}
-            onOpenCheckout={() => setIsCheckoutOpen(true)}
+            onOpenCheckout={(activeSubOrders) => {
+              if (activeSubOrders) setSubOrders(activeSubOrders);
+              setIsCheckoutOpen(true);
+            }}
+            onCheckoutSuccess={handleCompleteTransaction}
+            currentUser={currentUser}
+            subOrders={subOrders}
+            onUpdateSubOrders={setSubOrders}
           />
         )}
 
@@ -658,6 +979,7 @@ export default function App() {
             onRecordPayment={handleRecordPayment}
             receivedBy={currentUser.name}
             currentUserRole={currentUser.role}
+            tenantId={currentUser.role === 'CASHIER' ? currentUser.parentOwnerId : currentUser.id}
           />
         )}
 
@@ -691,6 +1013,7 @@ export default function App() {
             settings={settings}
             staffAccounts={staffAccounts}
             currentUserRole={currentUser.role}
+            currentUserId={currentUser.id}
             onSaveSettings={handleSaveSettings}
             onUpgradeTier={handleSelectTier}
             onSaveStaffAccount={handleSaveStaffAccount}
@@ -723,9 +1046,13 @@ export default function App() {
         discount={discountDetails}
         totalAmount={discountDetails.finalTotal}
         customers={customers}
+        sukiList={sukiList}
         cashierName={currentUser.name}
         currentUserRole={currentUser.role}
         onComplete={handleCompleteTransaction}
+        subOrders={subOrders}
+        onClearSubOrders={() => setSubOrders([])}
+        userId={currentUser.id}
       />
 
       {/* RECEIPT MODAL */}

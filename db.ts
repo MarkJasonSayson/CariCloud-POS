@@ -8,7 +8,7 @@ dotenv.config();
 const db = mysql.createPool({
   host: 'localhost',
   user: 'root',
-  password: process.env.DB_PASSWORD,
+  password: '11242003Ezekiel',
   database: 'caricloud_db',
   port: 3306,
   connectionLimit: 50 // Added to prevent HTTP 500 crashes during concurrent bursts

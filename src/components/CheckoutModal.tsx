@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   X,
   Banknote,
@@ -9,7 +9,7 @@ import {
   ShieldCheck,
   RefreshCw
 } from 'lucide-react';
-import { CartItem, DiscountDetails, PaymentMethod, CustomerCredit, Transaction } from '../types';
+import { CartItem, DiscountDetails, PaymentMethod, CustomerCredit, Transaction, SubOrder } from '../types';
 
 interface CheckoutModalProps {
   isOpen: boolean;
@@ -22,6 +22,10 @@ interface CheckoutModalProps {
   cashierName: string;
   currentUserRole?: string; // Added to enforce role-based credit override
   onComplete: (tx: Transaction) => void;
+  subOrders?: SubOrder[];
+  onClearSubOrders?: () => void;
+  userId?: string | number;
+  sukiList?: CustomerCredit[] | Array<{ name: string; [key: string]: any }>;
 }
 
 export const CheckoutModal: React.FC<CheckoutModalProps> = ({
@@ -35,8 +39,29 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   cashierName,
   currentUserRole, // Destructure here
   onComplete,
+  subOrders = [],
+  onClearSubOrders,
+  userId,
+  sukiList = customers,
 }) => {
+  const AUTHORIZED_LEDGER = Array.isArray(sukiList) ? sukiList.map(s => s.name) : [];
+
+  // 1. Data derivations & safe fallbacks
+  const cartTotal = totalAmount;
+  const safeSubOrders = Array.isArray(subOrders) ? subOrders : [];
+  const safeCart = Array.isArray(cart) ? cart : [];
+  
+  const combinedOrders = [
+    ...safeSubOrders,
+    ...(safeCart.length > 0 
+      ? [{ id: 'main_cart_order', items: safeCart, total: cartTotal || 0, paymentMethod: 'Cash' }] 
+      : [])
+  ];
+
+  // 2. All useState hooks
+  const [settlementData, setSettlementData] = useState<Record<string, { paymentMethod: string; cashTendered: string; creditName?: string }>>({});
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
+  const [isSubmittingGrouped, setIsSubmittingGrouped] = useState<boolean>(false);
 
   // CASH State
   const [tenderedAmount, setTenderedAmount] = useState<number>(Math.ceil(totalAmount));
@@ -50,6 +75,41 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   // LISTAHAN CREDIT State
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
   const [adminOverrideGranted, setAdminOverrideGranted] = useState<boolean>(false);
+
+  // 3. All useMemo hooks
+  const multiGrandTotal = useMemo(() => {
+    return combinedOrders.reduce((sum, item) => sum + (Number(item.total) || 0), 0);
+  }, [combinedOrders]);
+
+  const hasAnyInsufficientCash = useMemo(() => {
+    return combinedOrders.some((item) => {
+      if (!item || !item.id) return false;
+      const method = settlementData[item.id]?.paymentMethod || item.paymentMethod || 'Cash';
+      if (method === 'Cash') {
+        const valStr = settlementData[item.id]?.cashTendered;
+        const tendered = Number(valStr) || 0;
+        return tendered < (Number(item.total) || 0);
+      }
+      return false;
+    });
+  }, [combinedOrders, settlementData]);
+
+  // 4. All useEffect hooks
+  useEffect(() => {
+    if (combinedOrders.length > 0) {
+      const initialData: Record<string, { paymentMethod: string; cashTendered: string; creditName?: string }> = {};
+      combinedOrders.forEach(order => {
+        if (order && order.id) {
+          initialData[order.id] = {
+            paymentMethod: order.paymentMethod || 'Cash',
+            cashTendered: '',
+            creditName: ''
+          };
+        }
+      });
+      setSettlementData(initialData);
+    }
+  }, [subOrders, cart]);
 
   useEffect(() => {
     if (isOpen) {
@@ -93,8 +153,6 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       if (intervalId) clearInterval(intervalId);
     };
   }, [paymentMethod, paymongoData, paymongoVerified]);
-
-  if (!isOpen) return null;
 
   const changeAmount = Math.max(0, tenderedAmount - totalAmount);
   const isCashInsufficient = tenderedAmount < totalAmount;
@@ -292,9 +350,123 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     onComplete(newTx);
   };
 
+  // Handlers and helper functions (continued)
+  // Task 4: Finalize Grouped Payload Execution
+  const handleFinalizeGroupedTransaction = async () => {
+    if (hasAnyInsufficientCash) {
+      alert('One or more Cash sub-orders have insufficient tendered cash amounts.');
+      return;
+    }
+
+    const finalizedSubOrders = combinedOrders.map((order, idx) => {
+      const orderId = order.id || `order-${idx}`;
+      const itemTotal = Number(order.total) || 0;
+      const settlement = settlementData[orderId] || { paymentMethod: order.paymentMethod || 'Cash', cashTendered: String(itemTotal), creditName: '' };
+      const tendered = Number(settlement.cashTendered) || itemTotal;
+      const change = Math.max(0, tendered - itemTotal);
+      const method = settlement.paymentMethod || order.paymentMethod || 'Cash';
+      return {
+        id: orderId,
+        items: order.items,
+        total: itemTotal,
+        paymentMethod: method,
+        creditName: method === 'Credit' ? (settlement.creditName || null) : null,
+        tenderedAmount: tendered,
+        changeAmount: change,
+        isLocked: true,
+      };
+    });
+
+    const grandTotal = finalizedSubOrders.reduce((sum, so) => sum + so.total, 0);
+    const totalTendered = finalizedSubOrders.reduce((sum, so) => sum + (so.tenderedAmount || so.total), 0);
+    const totalChange = Math.max(0, totalTendered - grandTotal);
+
+    let resolvedUserId = userId;
+    if (!resolvedUserId) {
+      try {
+        const saved = localStorage.getItem('caricloud_user');
+        if (saved) {
+          const u = JSON.parse(saved);
+          resolvedUserId = u.id;
+        }
+      } catch (_) {}
+    }
+    if (!resolvedUserId) resolvedUserId = 5;
+
+    const masterOrderPayload = {
+      userId: resolvedUserId,
+      receiptNo: 'RCPT-' + Date.now(),
+      subOrders: finalizedSubOrders,
+      items: finalizedSubOrders.flatMap((so) => so.items),
+      subtotal: grandTotal,
+      totalAmount: grandTotal,
+      tenderedAmount: totalTendered,
+      changeAmount: totalChange,
+      cashierName: cashierName || 'Cashier',
+      timestamp: new Date().toISOString(),
+    };
+
+    setIsSubmittingGrouped(true);
+    try {
+      const res = await fetch('/api/transactions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(masterOrderPayload),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const createdTx: Transaction = {
+          id: 'tx-' + (data.sessionId || Date.now()),
+          receiptNo: data.receiptNo || masterOrderPayload.receiptNo,
+          timestamp: new Date().toISOString(),
+          items: masterOrderPayload.items,
+          subOrders: finalizedSubOrders,
+          subtotal: grandTotal,
+          discount: discount,
+          totalAmount: grandTotal,
+          paymentMethod: finalizedSubOrders.length === 1 ? finalizedSubOrders[0].paymentMethod : 'SPLIT_BILL',
+          cashierName: cashierName || 'Cashier',
+          tenderedAmount: totalTendered,
+          changeAmount: totalChange,
+          syncedOffline: true,
+        };
+
+        if (onClearSubOrders) onClearSubOrders();
+        onComplete(createdTx);
+        onClose();
+      } else {
+        alert(data.error || 'Failed to complete checkout');
+      }
+    } catch (err) {
+      console.error('Grouped checkout error:', err);
+      alert('Network error while processing checkout.');
+    } finally {
+      setIsSubmittingGrouped(false);
+    }
+  };
+
+  // 6. Early return guard
+  if (!isOpen) return null;
+
+  const isAllValid = combinedOrders.every(item => {
+    if (!item || !item.id) return true;
+    const set = settlementData[item.id];
+    if (!set) return false;
+    
+    if (set.paymentMethod === 'Cash') {
+      return Number(set.cashTendered) >= Number(item.total);
+    }
+    if (set.paymentMethod === 'Credit') {
+      // We will update AUTHORIZED_LEDGER in Task 3
+      return set.creditName && AUTHORIZED_LEDGER.includes(set.creditName);
+    }
+    return true;
+  });
+
+  // 7. JSX return
   return (
     <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl shadow-2xl max-w-2xl w-full border border-slate-100 overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="bg-white dark:bg-slate-900 dark:text-white rounded-3xl shadow-2xl max-w-2xl w-full border border-slate-100 dark:border-slate-800 overflow-hidden flex flex-col max-h-[90vh]">
 
         {/* Header */}
         <div className="p-6 bg-slate-900 text-white flex items-center justify-between">
@@ -310,12 +482,170 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           </button>
         </div>
 
-        {/* Modal Body */}
-        <div className="p-6 flex-1 overflow-y-auto space-y-6">
+        {/* Modal Body & Footer Conditional Rendering: Multi-Order Grouped Settlement vs Standard Single Order */}
+        {combinedOrders.length > 1 ? (
+          <div className="p-6 flex-1 flex flex-col justify-between overflow-hidden">
+            <div className="overflow-y-auto max-h-[60vh] space-y-4 pr-2">
+              {combinedOrders.map((item, index) => {
+                if (!item || !item.id) return null;
+                
+                const itemId = item.id;
+                // Force Number cast to prevent .toFixed() crash
+                const itemTotal = Number(item.total) || 0; 
+                const isMainOrder = itemId === 'main_cart_order';
+                const title = isMainOrder ? "Main Order" : `Sub-Order #${index + 1}`;
+                const currentSet = settlementData[itemId] || { paymentMethod: 'Cash', cashTendered: '', creditName: '' };
+                
+                // Force Number cast to prevent NaN crash
+                const cashTenderedNum = Number(currentSet.cashTendered) || 0; 
+                const changeDue = Math.max(0, cashTenderedNum - itemTotal);
+                const isInsufficient = currentSet.paymentMethod === 'Cash' && cashTenderedNum > 0 && cashTenderedNum < itemTotal;
 
-          {/* Order Summary Ribbon */}
-          <div className="bg-orange-50/80 border border-orange-100 rounded-2xl p-4 flex items-center justify-between">
-            <div>
+                return (
+                  <div key={itemId} className="bg-slate-50 border border-slate-200 p-4 rounded-xl space-y-4">
+                    <div className="flex justify-between items-center border-b border-slate-200 pb-2">
+                      <h4 className="font-bold text-slate-800 text-sm">{title}</h4>
+                      <span className="font-black text-orange-600">₱{itemTotal.toFixed(2)}</span>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600 mb-2">Payment Path</label>
+                      <select 
+                        value={currentSet.paymentMethod}
+                        onChange={(e) => setSettlementData(prev => ({ ...prev, [itemId]: { ...prev[itemId], paymentMethod: e.target.value } }))}
+                        className="w-full p-2 border border-slate-300 rounded-lg text-sm font-bold dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400"
+                      >
+                        <option value="Cash">Cash</option>
+                        <option value="QR">QR / E-Wallet</option>
+                        <option value="Credit">Credit Ledger</option>
+                      </select>
+                    </div>
+
+                    {currentSet.paymentMethod === 'Cash' && (
+                      <div className="space-y-3">
+                        <label className="block text-xs font-bold text-slate-600">Rapid Cash Tender Preset</label>
+                        <div className="flex flex-wrap gap-2">
+                          {['Exact', '50', '100', '200', '500', '1000'].map(preset => (
+                            <button
+                              key={preset}
+                              type="button"
+                              onClick={() => {
+                                const val = preset === 'Exact' ? itemTotal.toString() : preset;
+                                setSettlementData(prev => ({ ...prev, [itemId]: { ...prev[itemId], cashTendered: val } }));
+                              }}
+                              className="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold hover:border-orange-500 hover:text-orange-600 transition"
+                            >
+                              {preset === 'Exact' ? 'Exact' : `₱${preset}`}
+                            </button>
+                          ))}
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-slate-600 mb-1">Custom Cash Tendered (₱)</label>
+                          <input
+                            type="number"
+                            value={currentSet.cashTendered}
+                            onChange={(e) => setSettlementData(prev => ({ ...prev, [itemId]: { ...prev[itemId], cashTendered: e.target.value } }))}
+                            className="w-full p-2 text-lg font-black border border-slate-300 rounded-lg dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400"
+                            placeholder="0.00"
+                          />
+                        </div>
+
+                        {isInsufficient ? (
+                          <div className="p-3 rounded-lg border bg-red-50 border-red-200">
+                            <div className="text-xs font-bold text-red-600 mb-1">INSUFFICIENT AMOUNT</div>
+                            <div className="text-xl font-black text-red-700">Need ₱{(itemTotal - cashTenderedNum).toFixed(2)} more</div>
+                          </div>
+                        ) : (
+                          <div className={`p-3 rounded-lg border ${changeDue >= 0 && cashTenderedNum >= itemTotal ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-100 border-slate-200'}`}>
+                            <div className="text-xs font-bold text-slate-600 mb-1">CHANGE DUE</div>
+                            <div className={`text-xl font-black ${changeDue >= 0 && cashTenderedNum >= itemTotal ? 'text-emerald-700' : 'text-slate-800'}`}>
+                              ₱{changeDue.toFixed(2)}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {currentSet.paymentMethod === 'QR' && (
+                      <div className="flex flex-col items-center justify-center p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                        <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">Scan to Pay Exact Amount</div>
+                        <img 
+                          src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=QRPH_PAY_PHP_${itemTotal.toFixed(2)}`} 
+                          alt="QRPh Code" 
+                          className="w-32 h-32 rounded-lg shadow-sm border border-slate-200"
+                        />
+                        <div className="text-2xl font-black text-slate-800">₱{itemTotal.toFixed(2)}</div>
+                      </div>
+                    )}
+
+                    {currentSet.paymentMethod === 'Credit' && (
+                      <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                        <label className="block text-xs font-bold text-slate-600">Authorized Ledger Name</label>
+                        <input
+                          type="text"
+                          value={currentSet.creditName || ''}
+                          onChange={(e) => setSettlementData(prev => ({ ...prev, [itemId]: { ...prev[itemId], creditName: e.target.value } }))}
+                          className="w-full p-3 border border-slate-300 rounded-lg text-sm font-bold placeholder:font-normal dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400"
+                          placeholder="Enter account name..."
+                        />
+                        
+                        {currentSet.creditName && !AUTHORIZED_LEDGER.includes(currentSet.creditName) && (
+                          <div className="text-xs font-bold text-red-500 bg-red-50 p-2 rounded-lg border border-red-100">
+                            ⚠️ Name not found in authorized ledger. Payment blocked.
+                          </div>
+                        )}
+                        {currentSet.creditName && AUTHORIZED_LEDGER.includes(currentSet.creditName) && (
+                          <div className="text-xs font-bold text-emerald-600 bg-emerald-50 p-2 rounded-lg border border-emerald-100">
+                            ✓ Authorized Listahan account verified.
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Sticky Footer for Multi-Order */}
+            <div className="sticky bottom-0 bg-white pt-4 border-t border-slate-100 flex items-center justify-between mt-3">
+              <div>
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">
+                  GRAND TOTAL DUE
+                </span>
+                <span className="text-2xl font-black text-slate-900 tracking-tight">
+                  ₱{multiGrandTotal.toFixed(2)}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-4 py-2.5 text-xs font-extrabold text-slate-500 hover:text-slate-900 transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleFinalizeGroupedTransaction}
+                  disabled={!isAllValid}
+                  className="px-6 py-3 bg-orange-500 hover:bg-orange-600 disabled:bg-slate-300 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black rounded-full text-xs shadow-airmee-orange transition flex items-center space-x-2 cursor-pointer active:scale-[0.98]"
+                >
+                  <CheckCircle2 className="w-5 h-5 stroke-[2.5]" />
+                  <span>{isSubmittingGrouped ? 'LOGGING ORDER...' : 'FINALIZE & PRINT RECEIPT'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Single Order Modal Body */}
+            <div className="p-6 flex-1 overflow-y-auto space-y-6">
+
+              {/* Order Summary Ribbon */}
+              <div className="bg-orange-50/80 border border-orange-100 rounded-2xl p-4 flex items-center justify-between">
+                <div>
               <span className="text-xs text-orange-600 font-extrabold uppercase tracking-widest block">Total Amount Due</span>
               <span className="text-3xl font-black text-slate-900 tracking-tight">₱{totalAmount.toFixed(2)}</span>
             </div>
@@ -408,7 +738,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                   min={totalAmount}
                   value={tenderedAmount || ''}
                   onChange={(e) => setTenderedAmount(parseFloat(e.target.value) || 0)}
-                  className="w-full text-2xl font-black px-4 py-2.5 bg-white border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none text-slate-900"
+                  className="w-full text-2xl font-black px-4 py-2.5 bg-white border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500 focus:outline-none text-slate-900 dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400"
                 />
               </div>
 
@@ -522,7 +852,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                     setSelectedCustomerId(e.target.value);
                     setAdminOverrideGranted(false);
                   }}
-                  className="w-full px-4 py-2.5 text-xs bg-white border border-slate-200 rounded-full focus:ring-2 focus:ring-orange-500 font-bold text-slate-900"
+                  className="w-full px-4 py-2.5 text-xs bg-white border border-slate-200 rounded-full focus:ring-2 focus:ring-orange-500 font-bold text-slate-900 dark:bg-slate-800 dark:text-white dark:border-slate-700 dark:placeholder-slate-400"
                 >
                   <option value="">-- Choose Suki Customer --</option>
                   {customers.map((c) => (
@@ -599,6 +929,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             <span>FINALIZE & PRINT RECEIPT</span>
           </button>
         </div>
+      </>
+    )}
 
       </div>
     </div>

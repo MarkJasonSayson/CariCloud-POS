@@ -71,6 +71,17 @@ export interface DiscountDetails {
   discountAmount: number;
 }
 
+export interface SubOrder {
+  id?: string;
+  items: CartItem[];
+  total: number;
+  paymentMethod: string;
+  creditName?: string | null;
+  tenderedAmount?: number;
+  changeAmount?: number;
+  isLocked?: boolean;
+}
+
 export interface Transaction {
   id: string;
   receiptNo: string;
@@ -79,7 +90,8 @@ export interface Transaction {
   subtotal: number;
   discount: DiscountDetails;
   totalAmount: number;
-  paymentMethod: PaymentMethod;
+  paymentMethod: PaymentMethod | string;
+  subOrders?: SubOrder[];
   tenderedAmount?: number;
   changeAmount?: number;
   customerId?: string; // For Listahan
